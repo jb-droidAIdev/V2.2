@@ -20,42 +20,46 @@ export class CampaignsService {
         // Check if user is admin or above
         const user = await this.prisma.user.findUnique({
             where: { id: userId },
-            select: { role: true }
+            select: { role: true, name: true, employeeTeam: true }
         });
 
-        const where: any = { isActive: true };
+        const isAdmin = user && ['ADMIN', 'QA_TL', 'OPS_TL'].includes(user.role);
 
-        // Regular QAs only see assigned campaigns
-        if (user && !['ADMIN', 'QA_TL', 'OPS_TL'].includes(user.role)) {
-            where.qaAssignments = {
-                some: { userId }
-            };
-        }
-
-        // 1. Get all candidate campaigns
-        const campaigns = await this.prisma.campaign.findMany({
-            where,
-            select: { id: true, name: true }
-        });
-
-        // 2. Get all active form criteria (either linked to a campaign or to a team name)
+        // 1. Get all active forms first - they are the "Source of Truth" for what can be audited
         const activeForms = await this.prisma.monitoringForm.findMany({
             where: {
                 isArchived: false,
                 versions: { some: { isActive: true } }
             },
-            select: {
-                campaignId: true,
-                teamName: true
-            }
+            select: { id: true, campaignId: true, teamName: true }
         });
 
-        const activeCampaignIds = new Set(activeForms.filter(f => f.campaignId).map(f => f.campaignId));
-        const activeTeamNames = new Set(activeForms.filter(f => f.teamName).map(f => f.teamName));
+        const activeCampaignIds = new Set(activeForms.map(f => f.campaignId).filter(Boolean));
+        const activeTeamNames = new Set(activeForms.map(f => f.teamName).filter(Boolean));
 
-        // 3. Filter campaigns that have a corresponding active form
+        // 2. Define campaign visibility
+        let campaigns;
+        if (isAdmin) {
+            // Admins see all campaigns that ARE evaluate-able
+            campaigns = await this.prisma.campaign.findMany({
+                where: { isActive: true },
+                select: { id: true, name: true }
+            });
+        } else {
+            // Regular QAs only see active campaigns they are explicitly assigned to
+            campaigns = await this.prisma.campaign.findMany({
+                where: {
+                    isActive: true,
+                    qaAssignments: { some: { userId } }
+                },
+                select: { id: true, name: true }
+            });
+        }
+
+        // 3. Final Filter: Only return campaigns that have an active form (via ID or Team Name)
         return campaigns.filter(campaign =>
-            activeCampaignIds.has(campaign.id) || activeTeamNames.has(campaign.name)
+            activeCampaignIds.has(campaign.id) ||
+            activeTeamNames.has(campaign.name)
         );
     }
 

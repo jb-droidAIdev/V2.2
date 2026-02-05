@@ -141,6 +141,7 @@ model MonitoringFormVersion {
   categories    Json // Tree structure or linked list logic defined in app or related models
   createdAt     DateTime  @default(now())
   publishedAt   DateTime?
+  changeLog     String?
   creatorId     String?
 
   form   MonitoringForm @relation(fields: [formId], references: [id])
@@ -159,6 +160,7 @@ model FormCriterion {
   description   String?
   weight        Float   @default(1.0)
   isCritical    Boolean @default(false) // Auto-fail logic
+  isActive      Boolean @default(true)
   orderIndex    Int     @default(0)
 
   formVersion MonitoringFormVersion @relation(fields: [formVersionId], references: [id])
@@ -281,6 +283,10 @@ model AuditScore {
   score       Float
   comment     String?
   isFailed    Boolean @default(false)
+
+  // Snapshots for data integrity
+  categoryLabel  String?
+  criterionTitle String?
 
   audit     Audit         @relation(fields: [auditId], references: [id])
   criterion FormCriterion @relation(fields: [criterionId], references: [id])

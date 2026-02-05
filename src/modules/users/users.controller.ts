@@ -1,9 +1,10 @@
 import { Controller, Get, UseGuards, Param, Req, Post, Body, Delete, Patch } from '@nestjs/common';
 import { UsersService } from './users.service';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AuthGuard } from '@nestjs/passport';
+import { RolesGuard } from '../auth/roles.guard';
 
 @Controller('users')
-@UseGuards(JwtAuthGuard)
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 export class UsersController {
     constructor(private readonly usersService: UsersService) { }
 
@@ -22,37 +23,37 @@ export class UsersController {
         return this.usersService.findByTeam(teamName, req.user.id);
     }
 
-    @UseGuards(JwtAuthGuard)
+    @UseGuards(AuthGuard('jwt'))
     @Post('bulk')
     async bulkCreate(@Body() users: any[]) {
         return this.usersService.bulkCreate(users);
     }
 
-    @UseGuards(JwtAuthGuard)
+    @UseGuards(AuthGuard('jwt'))
     @Patch('teams/rename')
     async renameTeam(@Body() body: { oldName: string; newName: string }) {
         return this.usersService.bulkUpdateTeam(body.oldName, body.newName);
     }
 
-    @UseGuards(JwtAuthGuard)
+    @UseGuards(AuthGuard('jwt'))
     @Patch(':id')
     async update(@Param('id') id: string, @Body() data: any) {
         return this.usersService.updateUser(id, data);
     }
 
-    @UseGuards(JwtAuthGuard)
+    @UseGuards(AuthGuard('jwt'))
     @Get(':id/campaigns')
     async getCampaigns(@Param('id') id: string) {
         return this.usersService.getAssignedCampaigns(id);
     }
 
-    @UseGuards(JwtAuthGuard)
+    @UseGuards(AuthGuard('jwt'))
     @Post(':id/campaigns')
     async updateCampaigns(@Param('id') id: string, @Body() body: { campaignIds: string[] }) {
         return this.usersService.assignCampaigns(id, body.campaignIds);
     }
 
-    @UseGuards(JwtAuthGuard)
+    @UseGuards(AuthGuard('jwt'))
     @Delete(':id')
     async remove(@Param('id') id: string) {
         return this.usersService.remove(id);

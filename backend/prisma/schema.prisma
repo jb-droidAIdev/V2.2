@@ -1,0 +1,419 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Enums
+enum Role {
+  AGENT
+  QA
+  QA_TL
+  OPS_TL
+  ADMIN
+}
+
+enum AuditStatus {
+  DRAFT
+  IN_PROGRESS
+  SUBMITTED
+  RELEASED
+  DISPUTED
+  REAPPEALED
+}
+
+enum DisputeStatus {
+  PENDING_QA_REVIEW
+  QA_REJECTED
+  REAPPEALED
+  FINALIZED
+}
+
+enum DisputeVerdict {
+  ACCEPTED
+  REJECTED
+}
+
+enum NotificationType {
+  AUDIT_RELEASED
+  DISPUTE_OPENED
+  DISPUTE_UPDATED
+  SLA_WARNING
+  SLA_BREACH
+}
+
+// Core Users
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  password     String   @default("") // Hashed
+  role         Role
+  eid          String?  @unique
+  systemId     String?  @unique
+  billable     Boolean  @default(true)
+  employeeTeam String?
+  projectCode  String?
+  supervisor   String?
+  manager      String?
+  sdm          String?
+  isActive            Boolean   @default(true)
+  mustChangePassword  Boolean   @default(true)
+  lastLoginAt         DateTime?
+  failedLoginAttempts Int       @default(0)
+  lockoutUntil        DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  // Relations
+  qaAssignments       CampaignQA[]
+  auditsConducted     Audit[]                  @relation("Auditor")
+  auditsReceived      Audit[]                  @relation("Agent")
+  uploadedBatches     TicketUploadBatch[]
+  disputesRaised      Dispute[]                @relation("DisputeRaiser")
+  notifications       Notification[]
+  calibrationSessions CalibrationParticipant[]
+  createdFormVersions MonitoringFormVersion[] @relation("FormVersionCreator")
+}
+
+enum CampaignType {
+  ADMIN
+  USER
+}
+
+model Campaign {
+  id             String       @id @default(uuid())
+  name           String
+  type           CampaignType @default(USER)
+  isActive       Boolean      @default(true)
+  samplingRate   Float    @default(5.0) // Percentage
+  stratification Json? // Config for channel split etc
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  qaAssignments CampaignQA[]
+  uploadBatches TicketUploadBatch[]
+  forms         MonitoringForm[]
+  ticketPool    UploadedTicket[]
+  audits        Audit[]
+  samplingRuns  SamplingRun[]
+}
+
+model CampaignQA {
+  id         String   @id @default(uuid())
+  campaignId String
+  userId     String
+  isActive   Boolean  @default(true)
+  assignedAt DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@unique([campaignId, userId])
+}
+
+// Forms
+model MonitoringForm {
+  id          String   @id @default(uuid())
+  campaignId  String?
+  teamName    String?
+  name        String
+  description String?
+  isConfigured Boolean  @default(false)
+  isArchived   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  campaign Campaign?                @relation(fields: [campaignId], references: [id])
+  versions MonitoringFormVersion[]
+}
+
+model MonitoringFormVersion {
+  id            String    @id @default(uuid())
+  formId        String
+  versionNumber Int
+  isActive      Boolean   @default(false)
+  isDraft       Boolean   @default(true)
+  categories    Json // Tree structure or linked list logic defined in app or related models
+  createdAt     DateTime  @default(now())
+  publishedAt   DateTime?
+  creatorId     String?
+
+  form   MonitoringForm @relation(fields: [formId], references: [id])
+  creator User?          @relation("FormVersionCreator", fields: [creatorId], references: [id])
+  audits Audit[]
+
+  criteria FormCriterion[]
+}
+
+model FormCriterion {
+  id            String  @id @default(uuid())
+  formVersionId String
+  categoryId    String // Grouping ID
+  categoryName  String
+  title         String
+  description   String?
+  weight        Float   @default(1.0)
+  isCritical    Boolean @default(false) // Auto-fail logic
+  orderIndex    Int     @default(0)
+
+  formVersion MonitoringFormVersion @relation(fields: [formVersionId], references: [id])
+  auditScores AuditScore[]
+  disputeItems DisputeItem[]
+}
+
+// Tickets & Sampling
+model TicketUploadBatch {
+  id          String   @id @default(uuid())
+  campaignId  String
+  uploadedBy  String
+  filename    String
+  uploadedAt  DateTime @default(now())
+  isProcessed Boolean  @default(false)
+
+  campaign     Campaign         @relation(fields: [campaignId], references: [id])
+  uploader     User             @relation(fields: [uploadedBy], references: [id])
+  tickets      UploadedTicket[]
+  samplingRuns SamplingRun[]
+}
+
+model UploadedTicket {
+  id               String   @id @default(uuid())
+  batchId          String
+  campaignId       String
+  externalTicketId String // System ID from source
+  agentId          String // External Agent ID (string mapped to User later or loose)
+  interactionDate  DateTime
+  channel          String?
+  metadata         Json? // Extra fields
+
+  batch    TicketUploadBatch @relation(fields: [batchId], references: [id])
+  campaign Campaign          @relation(fields: [campaignId], references: [id])
+
+  sampledTicket SampledTicket?
+}
+
+model SamplingRun {
+  id         String   @id @default(uuid())
+  campaignId String
+  batchId    String
+  runAt      DateTime @default(now())
+  configUsed Json // Snapshot of sampling rules
+
+  campaign Campaign          @relation(fields: [campaignId], references: [id])
+  batch    TicketUploadBatch @relation(fields: [batchId], references: [id])
+  samples  SampledTicket[]
+}
+
+model SampledTicket {
+  id           String  @id @default(uuid())
+  ticketId     String  @unique
+  runId        String
+  assignedQaId String? // User ID of QA
+  status       String  @default("READY")
+
+  ticket UploadedTicket @relation(fields: [ticketId], references: [id])
+  run    SamplingRun    @relation(fields: [runId], references: [id])
+  audit  Audit?
+}
+
+// Audits
+model Audit {
+  id              String      @id @default(uuid())
+  campaignId      String
+  sampledTicketId String?     @unique
+  formVersionId   String
+  auditorId       String
+  agentId         String // User ID of the agent
+  status          AuditStatus @default(DRAFT)
+  ticketReference String? // For manual audits (e.g. Call ID)
+
+  score        Float? // 0-100 or total points
+  isAutoFailed Boolean @default(false)
+
+  startedAt   DateTime  @default(now())
+  submittedAt DateTime?
+  releasedAt  DateTime?
+
+  // SLA Timestamps
+  agentAckDeadline DateTime?
+  lastActionAt     DateTime  @default(now())
+
+  // Relations
+  campaign      Campaign               @relation(fields: [campaignId], references: [id])
+  sampledTicket SampledTicket?         @relation(fields: [sampledTicketId], references: [id])
+  formVersion   MonitoringFormVersion  @relation(fields: [formVersionId], references: [id])
+  auditor       User                   @relation("Auditor", fields: [auditorId], references: [id])
+  agent         User                   @relation("Agent", fields: [agentId], references: [id]) // Assuming agent is a System User
+
+  fieldValues AuditFieldValue[]
+  scores      AuditScore[]
+  events      AuditEvent[]
+
+  dispute     Dispute?
+  releaseInfo ReleaseRecord?
+
+  // Poka-yoke: One open audit per QA
+  // Using partial index manually or application logic if this is too complex for standard prisma, but let's try strict.
+  // Note: Only one 'IN_PROGRESS' allowed.
+  // @@unique([auditorId, status]) would ensure only 1 audit of specific status, but we want generally only 1 IN_PROGRESS.
+}
+
+model AuditFieldValue {
+  id        String @id @default(uuid())
+  auditId   String
+  fieldName String
+  value     String
+
+  audit Audit @relation(fields: [auditId], references: [id])
+
+  @@unique([auditId, fieldName])
+}
+
+model AuditScore {
+  id          String  @id @default(uuid())
+  auditId     String
+  criterionId String
+  score       Float
+  comment     String?
+  isFailed    Boolean @default(false)
+
+  audit     Audit         @relation(fields: [auditId], references: [id])
+  criterion FormCriterion @relation(fields: [criterionId], references: [id])
+
+  @@unique([auditId, criterionId])
+}
+
+model AuditEvent {
+  id        String   @id @default(uuid())
+  auditId   String
+  timestamp DateTime @default(now())
+  actorId   String?
+  action    String
+  metadata  Json?
+
+  audit Audit @relation(fields: [auditId], references: [id])
+}
+
+// Release & Response
+model ReleaseRecord {
+  id         String   @id @default(uuid())
+  auditId    String   @unique
+  releasedAt DateTime @default(now())
+  releasedBy String?
+
+  audit Audit @relation(fields: [auditId], references: [id])
+}
+
+// Dispute
+model Dispute {
+  id              String        @id @default(uuid())
+  auditId         String        @unique
+  raisedById      String
+  status          DisputeStatus @default(PENDING_QA_REVIEW)
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  audit           Audit         @relation(fields: [auditId], references: [id])
+  raisedBy        User          @relation("DisputeRaiser", fields: [raisedById], references: [id])
+  
+  items           DisputeItem[]
+}
+
+model DisputeItem {
+  id              String         @id @default(uuid())
+  disputeId       String
+  criterionId     String
+  
+  // Stage 1
+  reason          String
+  createdAt       DateTime       @default(now())
+  
+  // Stage 2: QA Verdict
+  qaVerdict       DisputeVerdict?
+  qaComment       String?
+  qaReviewedById  String?
+  qaReviewedAt    DateTime?
+
+  // Stage 3: Re-appeal
+  reappealReason  String?
+  reappealedAt    DateTime?
+
+  // Stage 4: Final Verdict
+  finalVerdict    DisputeVerdict?
+  finalComment    String?
+  finalizedById   String?
+  finalizedAt     DateTime?
+
+  dispute         Dispute        @relation(fields: [disputeId], references: [id])
+  criterion       FormCriterion  @relation(fields: [criterionId], references: [id])
+}
+
+// Calibration
+model CalibrationSession {
+  id          String   @id @default(uuid())
+  title       String
+  scheduledAt DateTime
+  status      String // SCHEDULED, OPEN, CLOSED
+
+  participants CalibrationParticipant[]
+  scores       CalibrationScore[]
+}
+
+model CalibrationParticipant {
+  id        String @id @default(uuid())
+  sessionId String
+  userId    String
+
+  session CalibrationSession @relation(fields: [sessionId], references: [id])
+  user    User               @relation(fields: [userId], references: [id])
+}
+
+model CalibrationScore {
+  id        String @id @default(uuid())
+  sessionId String
+  userId    String // Scorer
+  ticketId  String // Just a reference or link to UploadedTicket
+  scoreJson Json // Snapshot of scoring
+
+  session CalibrationSession @relation(fields: [sessionId], references: [id])
+}
+
+// Notifications
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  message   String
+  link      String?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user     User                          @relation(fields: [userId], references: [id])
+  attempts NotificationDeliveryAttempt[]
+}
+
+model NotificationDeliveryAttempt {
+  id             String    @id @default(uuid())
+  notificationId String
+  method         String // EMAIL, TEAMS
+  status         String // PENDING, SENT, FAILED
+  sentAt         DateTime?
+  error          String?
+
+  notification Notification @relation(fields: [notificationId], references: [id])
+}
+
+model RubricRevisionQueueItem {
+  id          String   @id @default(uuid())
+  criterionId String
+  source      String // DISPUTE_VALID, MANUAL
+  description String
+  status      String // PENDING, REJECTED, APPLIED
+  createdAt   DateTime @default(now())
+}

@@ -69,7 +69,9 @@ export class FormsService {
             include: {
                 campaign: true,
                 versions: {
-                    orderBy: { versionNumber: 'desc' }
+                    where: { isActive: true },
+                    include: { criteria: true },
+                    take: 1
                 }
             }
         });
@@ -78,9 +80,32 @@ export class FormsService {
     async create(data: { campaignId?: string; teamName: string; name: string; description?: string }) {
         if (!data.name?.trim()) throw new Error('Form name is required');
 
-        if (data.campaignId) {
+        let targetCampaignId = data.campaignId;
+
+        // If no campaignId provided, check if we should link to or create one based on teamName
+        if (!targetCampaignId && data.teamName) {
+            const existingCampaign = await this.prisma.campaign.findFirst({
+                where: { name: data.teamName, isActive: true }
+            });
+
+            if (existingCampaign) {
+                targetCampaignId = existingCampaign.id;
+            } else {
+                // Auto-create a campaign to anchor this form
+                const newCampaign = await this.prisma.campaign.create({
+                    data: {
+                        name: data.teamName,
+                        type: 'USER',
+                        isActive: true
+                    }
+                });
+                targetCampaignId = newCampaign.id;
+            }
+        }
+
+        if (targetCampaignId) {
             const existing = await this.prisma.monitoringForm.findFirst({
-                where: { campaignId: data.campaignId, isArchived: false }
+                where: { campaignId: targetCampaignId, isArchived: false }
             });
             if (existing) {
                 throw new Error('A scorecard already exists for this configuration. Multiple forms per strategy are restricted.');
@@ -91,7 +116,7 @@ export class FormsService {
             data: {
                 name: data.name,
                 teamName: data.teamName,
-                campaignId: data.campaignId,
+                campaignId: targetCampaignId,
                 description: data.description,
                 isConfigured: false
             }
@@ -148,7 +173,12 @@ export class FormsService {
                 campaign: true,
                 versions: {
                     where: { isActive: true },
-                    include: { criteria: true },
+                    include: {
+                        criteria: {
+                            where: { isActive: true },
+                            orderBy: { orderIndex: 'asc' }
+                        }
+                    },
                     take: 1,
                     orderBy: { versionNumber: 'desc' }
                 }
@@ -180,6 +210,7 @@ export class FormsService {
                 isActive: false,
                 isDraft: true,
                 creatorId,
+                changeLog: data.changeLog,
                 categories: data.categories || [],
                 criteria: {
                     create: (data.criteria || []).map((c: any) => ({

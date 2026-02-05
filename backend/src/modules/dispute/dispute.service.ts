@@ -65,8 +65,14 @@ export class DisputeService {
         });
 
         if (!item) throw new NotFoundException('Dispute item not found');
-        // Check if auditor is the one who did the audit
-        if (item.dispute.audit.auditorId !== auditorId) throw new ForbiddenException('Only the original QA can provide the first verdict');
+
+        // Universal Access: Admins can provide verdicts even if they weren't the original auditor
+        const user = await this.prisma.user.findUnique({ where: { id: auditorId } });
+        const isAdmin = user?.role === 'ADMIN';
+
+        if (item.dispute.audit.auditorId !== auditorId && !isAdmin) {
+            throw new ForbiddenException('Only the original QA or an Admin can provide the first verdict');
+        }
 
         return this.prisma.$transaction(async (tx) => {
             const updatedItem = await tx.disputeItem.update({

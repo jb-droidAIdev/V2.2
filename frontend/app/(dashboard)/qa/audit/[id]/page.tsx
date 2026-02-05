@@ -60,7 +60,10 @@ export default function AuditExecutionPage() {
             // Initialize scores and fields from existing data if any
             const initialScores: any = {};
             res.data.scores?.forEach((s: any) => {
-                initialScores[s.criterionId] = { score: s.score, comment: s.comment };
+                initialScores[s.criterionId] = {
+                    score: Number(s.score),
+                    comment: s.comment || ''
+                };
             });
             setScores(initialScores);
 
@@ -106,8 +109,8 @@ export default function AuditExecutionPage() {
             try {
                 const scoresArray = Object.entries(scoresObj).map(([cid, val]: any) => ({
                     criterionId: cid,
-                    score: val.score,
-                    comment: val.comment
+                    score: Number(val.score),
+                    comment: val.comment || ''
                 }));
                 await api.patch(`/audits/${id}/autosave`, {
                     fieldValues: fields,
@@ -122,19 +125,130 @@ export default function AuditExecutionPage() {
         [id]
     );
 
+    const [validationErrors, setValidationErrors] = useState<string[]>([]);
+    const [highlightedFields, setHighlightedFields] = useState<string[]>([]);
+
     const handleSubmit = async () => {
+        // Prevent multiple rapid submissions
+        if (isSaving) return;
+
+        const errors: string[] = [];
+        const missingCommentIds: string[] = [];
+        const categoriesToExpand: string[] = [];
+
+        // 1. Check all criteria
+        if (audit?.formVersion?.criteria) {
+            audit.formVersion.criteria.forEach((item: any) => {
+                const scoreData = scores[item.id];
+
+                // First: ensure it's actually scored
+                if (scoreData?.score === undefined || scoreData?.score === null) {
+                    errors.push(`Scoring required for: ${item.title}`);
+                    missingCommentIds.push(item.id);
+                    if (!categoriesToExpand.includes(item.categoryId)) {
+                        categoriesToExpand.push(item.categoryId);
+                    }
+                    return; // Skip further checks for this item
+                }
+
+                // Second: if scored as No (0), require detailed remarks (min 10 chars)
+                // STRICT CHECK: Handle potential string '0' or float 0.0
+                const numericScore = Number(scoreData.score);
+                if (!isNaN(numericScore) && numericScore < 0.01) {
+                    const comment = scoreData.comment?.trim() || '';
+                    if (comment.length < 10) {
+                        errors.push(`Detailed remark (min 10 chars) required for: ${item.title}`);
+                        missingCommentIds.push(item.id);
+                        if (!categoriesToExpand.includes(item.categoryId)) {
+                            categoriesToExpand.push(item.categoryId);
+                        }
+                    }
+                }
+            });
+        }
+
+        if (errors.length > 0) {
+            setValidationErrors(errors);
+            setHighlightedFields(missingCommentIds);
+
+            // Show only the FIRST error to avoid multiple toasts
+            toast.error(errors[0]);
+
+            // Ensure categories are open so we can scroll to them
+            if (categoriesToExpand.length > 0) {
+                setExpandedCategories(prev => [...new Set([...prev, ...categoriesToExpand])]);
+            }
+
+            // Requirement: Route to the fields that were blank
+            // Wait longer to ensure category expansion animation completes
+            setTimeout(() => {
+                const firstErrorId = missingCommentIds[0];
+                console.log('Attempting to scroll to:', `criterion-${firstErrorId}`);
+                const element = document.getElementById(`criterion-${firstErrorId}`);
+                console.log('Element found:', element);
+                if (element) {
+                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    console.log('Scrolled to element');
+
+                    // Also try to focus the textarea if it exists
+                    const textarea = element.querySelector('textarea');
+                    if (textarea) {
+                        textarea.focus();
+                        console.log('Focused textarea');
+                    }
+                } else {
+                    console.error('Element not found in DOM');
+                }
+            }, 800);
+
+            // Clear highlighting after 5 seconds (increased from 3)
+            setTimeout(() => {
+                setHighlightedFields(prev => prev.filter(id => !missingCommentIds.includes(id)));
+            }, 5000);
+
+            return;
+        }
+
         setConfirmConfig({
             isOpen: true,
             title: 'Submit Audit',
             message: 'Are you sure you want to finalize this audit? This action cannot be undone and the results will be released to the agent.',
             variant: 'info',
             onConfirm: async () => {
+                setIsSaving(true);
                 try {
+                    // Force Save current state to ensure DB is consistent before submission
+                    // This prevents race condition where latest scores aren't in DB yet
+                    const scoresArray = Object.entries(scores).map(([cid, val]: any) => ({
+                        criterionId: cid,
+                        score: Number(val.score),
+                        comment: val.comment || ''
+                    }));
+
+                    await api.patch(`/audits/${id}/autosave`, {
+                        fieldValues,
+                        scores: scoresArray
+                    });
+
+                    // Proceed to Submit
                     await api.post(`/audits/${id}/submit`);
                     toast.success('Audit submitted successfully');
                     router.push('/qa/queue');
-                } catch (err) {
-                    toast.error('Failed to submit audit. Please ensure all required fields are complete.');
+                } catch (err: any) {
+                    console.error(err);
+                    // Don't show toast for validation errors - frontend already handled them
+                    const errorMsg = err.response?.data?.message || 'Failed to submit audit';
+                    const isValidationError = errorMsg.includes('required') ||
+                        errorMsg.includes('incomplete') ||
+                        errorMsg.includes('Detailed remarks');
+
+                    if (!isValidationError) {
+                        toast.error(errorMsg);
+                    }
+                    // If validation error, the confirmation dialog will close and user sees frontend validation
+                    setConfirmConfig({ ...confirmConfig, isOpen: false });
+                } finally {
+                    setIsSaving(false);
                 }
             }
         });
@@ -293,7 +407,10 @@ export default function AuditExecutionPage() {
                                         >
                                             <div className="divide-y divide-white/5">
                                                 {cat.items.map((item: any) => (
-                                                    <div key={item.id} className="p-6 space-y-4 hover:bg-white/[0.01] transition-all">
+                                                    <div key={item.id} id={`criterion-${item.id}`} className={cn(
+                                                        "p-6 space-y-4 hover:bg-white/[0.01] transition-all relative",
+                                                        highlightedFields.includes(item.id) && "bg-rose-500/5 ring-1 ring-rose-500/50 shadow-[0_0_20px_rgba(244,63,94,0.1)]"
+                                                    )}>
                                                         <div className="flex justify-between items-start">
                                                             <div className="space-y-1 max-w-[70%]">
                                                                 <h4 className="font-bold text-gray-200">{item.title}</h4>
@@ -320,9 +437,17 @@ export default function AuditExecutionPage() {
                                                         <div className="relative group">
                                                             <textarea
                                                                 value={scores[item.id]?.comment || ''}
-                                                                onChange={e => handleCommentChange(item.id, e.target.value)}
-                                                                className="w-full bg-black/20 border border-white/5 rounded-xl p-3 text-xs text-gray-300 placeholder:text-gray-600 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
-                                                                placeholder="Add observations or coaching tips..."
+                                                                onChange={e => {
+                                                                    handleCommentChange(item.id, e.target.value);
+                                                                    if (highlightedFields.includes(item.id)) {
+                                                                        setHighlightedFields(prev => prev.filter(id => id !== item.id));
+                                                                    }
+                                                                }}
+                                                                className={cn(
+                                                                    "w-full bg-black/20 border rounded-xl p-3 text-xs text-gray-300 placeholder:text-gray-600 focus:ring-1 focus:ring-blue-500 outline-none transition-all",
+                                                                    highlightedFields.includes(item.id) ? "border-rose-500/50" : "border-white/5"
+                                                                )}
+                                                                placeholder={scores[item.id]?.score === 0 ? "Detailed Remarks (min 10 chars)..." : "Add observations or coaching tips..."}
                                                                 rows={2}
                                                             />
                                                         </div>

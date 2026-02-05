@@ -1,6 +1,10 @@
-import { Search, Filter } from 'lucide-react';
+'use client';
+
+import { Search, Filter, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
+import { MultiSelect } from '@/components/ui/MultiSelect';
+import { DateRangePicker } from '@/components/ui/DateRangePicker';
 
 interface AuditFilterBarProps {
     searchTerm: string;
@@ -12,10 +16,13 @@ interface AuditFilterBarProps {
         campaign: string;
         dateFrom: string;
         dateTo: string;
+        agentIds: string[];
     };
     setFilters: (filters: any) => void;
     campaigns: string[];
+    agents: { id: string, name: string }[];
     totalCount: number;
+    onRefresh: () => void;
 }
 
 export default function AuditFilterBar({
@@ -26,106 +33,125 @@ export default function AuditFilterBar({
     filters,
     setFilters,
     campaigns,
-    totalCount
+    agents,
+    totalCount,
+    onRefresh
 }: AuditFilterBarProps) {
+    const activeFilterCount = Object.values(filters).filter((v: any) =>
+        Array.isArray(v) ? v.length > 0 : Boolean(v)
+    ).length + (searchTerm ? 1 : 0);
+
     return (
-        <>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="md:col-span-2 relative group">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
+        <div className="space-y-4">
+            <div className="flex gap-4 items-center bg-[#111113] p-2.5 rounded-2xl border border-white/5 shadow-2xl">
+                <div className="relative flex-1 group">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
                     <input
-                        type="text"
-                        placeholder="Search by Agent, Auditor, or Ticket ID..."
-                        className="w-full bg-[#0f172a]/50 border border-white/10 rounded-2xl py-3.5 pl-12 pr-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-slate-600 font-medium"
+                        className="w-full bg-[#0a0a0b] border-none rounded-xl pl-12 pr-4 py-3 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-white placeholder:text-slate-600 font-medium"
+                        placeholder="Search by Ticket ID / Auditor / Agent..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && onRefresh()}
                     />
                 </div>
-                <div className="flex items-center gap-4 md:col-span-2">
+
+                <div className="flex items-center gap-2">
                     <button
                         onClick={() => setIsFilterOpen(!isFilterOpen)}
                         className={cn(
-                            "flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl transition-all border font-bold",
-                            isFilterOpen
-                                ? "bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-600/20"
-                                : "bg-white/5 hover:bg-white/10 text-slate-300 border-white/10"
+                            "flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-bold transition-all border",
+                            isFilterOpen || activeFilterCount > 0
+                                ? "bg-blue-600/10 border-blue-500/50 text-blue-400 shadow-lg shadow-blue-500/10"
+                                : "bg-[#0a0a0b] border-white/5 text-slate-400 hover:text-white"
                         )}
                     >
-                        <Filter className="w-5 h-5" />
+                        <Filter className="w-4 h-4" />
                         <span>Filters</span>
+                        {activeFilterCount > 0 && (
+                            <span className="ml-1 bg-blue-500 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black">
+                                {activeFilterCount}
+                            </span>
+                        )}
                     </button>
-                    <div className="flex-1 bg-[#0f172a]/50 border border-white/10 py-3.5 rounded-2xl px-4 text-slate-400 text-sm font-medium">
-                        Total Audits: <span className="text-white font-bold">{totalCount}</span>
-                    </div>
+                    <button
+                        onClick={onRefresh}
+                        className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold text-sm transition-all shadow-lg shadow-blue-600/20 active:scale-95"
+                    >
+                        Refresh Audits
+                    </button>
                 </div>
             </div>
 
-            {/* Filter Panel */}
-            <AnimatePresence>
-                {isFilterOpen && (
-                    <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="bg-[#0f172a]/50 border border-white/10 rounded-3xl overflow-hidden"
-                    >
-                        <div className="p-6 grid grid-cols-1 md:grid-cols-4 gap-6">
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Status</label>
-                                <select
-                                    value={filters.status}
-                                    onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-                                    className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                                >
-                                    <option value="">All Statuses</option>
-                                    <option value="SUBMITTED">Submitted</option>
-                                    <option value="RELEASED">Released</option>
-                                    <option value="DRAFT">Draft</option>
-                                    <option value="IN_PROGRESS">In Progress</option>
-                                </select>
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Campaign</label>
-                                <select
-                                    value={filters.campaign}
-                                    onChange={(e) => setFilters({ ...filters, campaign: e.target.value })}
-                                    className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                                >
-                                    <option value="">All Campaigns</option>
-                                    {campaigns.map(c => (
-                                        <option key={c} value={c}>{c}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Date Range</label>
-                                <div className="flex gap-2">
-                                    <input
-                                        type="date"
-                                        value={filters.dateFrom}
-                                        onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
-                                        className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 placeholder-slate-600"
-                                    />
-                                    <input
-                                        type="date"
-                                        value={filters.dateTo}
-                                        onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
-                                        className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 placeholder-slate-600"
-                                    />
-                                </div>
-                            </div>
-                            <div className="flex items-end">
-                                <button
-                                    onClick={() => setFilters({ status: '', campaign: '', dateFrom: '', dateTo: '' })}
-                                    className="w-full py-3 bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold uppercase tracking-wider rounded-xl transition-all border border-white/10"
-                                >
-                                    Reset Filters
-                                </button>
-                            </div>
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
-        </>
+            {isFilterOpen && (
+                <div
+                    className="bg-[#111113] p-6 rounded-2xl border border-white/5 grid grid-cols-1 md:grid-cols-3 gap-6 animate-in fade-in slide-in-from-top-4 duration-200 mt-4"
+                >
+                    <MultiSelect
+                        label="Target Agent"
+                        placeholder="Select Agent(s)..."
+                        options={agents}
+                        selected={filters.agentIds}
+                        onChange={(vals) => setFilters({ ...filters, agentIds: vals })}
+                    />
+
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1">Status</label>
+                        <select
+                            value={filters.status}
+                            onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+                            className="w-full bg-[#0a0a0b] border border-white/5 rounded-xl px-4 py-3 text-sm text-white focus:ring-1 focus:ring-blue-500 outline-none appearance-none font-medium h-[46px]"
+                        >
+                            <option value="">All Statuses</option>
+                            <option value="SUBMITTED">Submitted</option>
+                            <option value="RELEASED">Released</option>
+                            <option value="DRAFT">Draft</option>
+                            <option value="IN_PROGRESS">In Progress</option>
+                            <option value="DISPUTED">Disputed</option>
+                            <option value="REAPPEALED">Re-appealed</option>
+                        </select>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1">Campaign</label>
+                        <select
+                            value={filters.campaign}
+                            onChange={(e) => setFilters({ ...filters, campaign: e.target.value })}
+                            className="w-full bg-[#0a0a0b] border border-white/5 rounded-xl px-4 py-3 text-sm text-white focus:ring-1 focus:ring-blue-500 outline-none appearance-none font-medium h-[46px]"
+                        >
+                            <option value="">All Campaigns</option>
+                            {campaigns.map(c => (
+                                <option key={c} value={c}>{c}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <DateRangePicker
+                        startDate={filters.dateFrom}
+                        endDate={filters.dateTo}
+                        onChange={(s, e) => setFilters({ ...filters, dateFrom: s, dateTo: e })}
+                    />
+
+                    <div className="flex items-end gap-3 md:col-span-2">
+                        <button
+                            onClick={onRefresh}
+                            className="flex-1 bg-white text-black py-2.5 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-200 transition-colors h-[46px]"
+                        >
+                            Apply Filters
+                        </button>
+                        <button
+                            onClick={() => {
+                                setFilters({ status: '', campaign: '', dateFrom: '', dateTo: '', agentIds: [] });
+                                setSearchTerm('');
+                                onRefresh();
+                            }}
+                            className="p-2.5 text-slate-500 hover:text-rose-500 transition-colors h-[46px] border border-white/5 rounded-xl bg-white/5"
+                            title="Clear all filters"
+                        >
+                            <X className="w-5 h-5 mx-auto" />
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
     );
 }

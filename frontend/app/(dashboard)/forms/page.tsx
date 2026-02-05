@@ -93,18 +93,30 @@ export default function FormsPage() {
     const fetchData = async (silent = false) => {
         if (!silent) setIsLoading(true);
         try {
-            const [formsRes, campaignsRes, usersRes] = await Promise.all([
+            const [formsRes, campaignsRes, teamsRes] = await Promise.all([
                 api.get('/forms'),
                 api.get('/campaigns'),
-                api.get('/users')
+                api.get('/users/teams/dossier')
             ]);
             setForms(formsRes.data);
             setCampaigns(campaignsRes.data);
-            // ... (keeping rest of logic)
+
+            // Extract names from campaigns
+            const campaignNames = campaignsRes.data.map((c: any) => c.name);
+
+            // Combine with teams from dossier
+            const dossierTeams = teamsRes.data || [];
+
+            // Create a unique set of all possible "Target Teams"
+            const allTargetTeams = Array.from(new Set([...campaignNames, ...dossierTeams])) as string[];
+
+            setTeams(allTargetTeams.filter(Boolean).sort());
+
             setIsLoading(false);
             setIsInitialLoad(false);
         } catch (err) {
-            // ...
+            console.error('Fetch forms error:', err);
+            toast.error('Failed to sync scorecard data');
         } finally {
             setIsLoading(false);
         }

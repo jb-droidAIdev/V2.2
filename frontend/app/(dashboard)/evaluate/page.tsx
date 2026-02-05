@@ -80,26 +80,6 @@ export default function EvaluatePage() {
         }
     };
 
-    const handleStartEvaluation = async () => {
-        if (!selectedAgent || !selectedCampaign) {
-            setError('Please select both a campaign and an agent');
-            return;
-        }
-
-        setIsStarting(true);
-        try {
-            const res = await api.post('/audits/manual', {
-                campaignId: selectedCampaign,
-                agentId: selectedAgent.id,
-                ticketReference: ticketReference || undefined
-            });
-            router.push(`/qa/audit/${res.data.id}`);
-        } catch (err: any) {
-            toast.error(err.response?.data?.message || 'Failed to start evaluation');
-        } finally {
-            setIsStarting(false);
-        }
-    };
 
     const filteredAgents = agents.filter(agent =>
         agent.name.toLowerCase().includes(agentSearch.toLowerCase()) ||

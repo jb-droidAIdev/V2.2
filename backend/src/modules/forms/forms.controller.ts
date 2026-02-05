@@ -2,7 +2,10 @@ import { Controller, Get, Post, Body, Param, Patch, UseGuards, Delete, Req, Quer
 import { FormsService } from './forms.service';
 import { AuthGuard } from '@nestjs/passport';
 
+import { RolesGuard } from '../auth/roles.guard';
+
 @Controller('forms')
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 export class FormsController {
     constructor(private readonly formsService: FormsService) { }
 

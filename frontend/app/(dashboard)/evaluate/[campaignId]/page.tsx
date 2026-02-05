@@ -329,6 +329,69 @@ export default function EvaluateCampaignPage() {
             return;
         }
 
+        // Validation: Check for zero scores without detailed remarks
+        const errors: string[] = [];
+        const missingCommentIds: string[] = [];
+        const categoriesToExpand: string[] = [];
+
+        if (activeVersion?.criteria) {
+            activeVersion.criteria.forEach((item: any) => {
+                const scoreData = scores[item.id];
+
+                // First: ensure it's actually scored
+                if (scoreData?.score === undefined || scoreData?.score === null) {
+                    errors.push(`Scoring required for: ${item.title}`);
+                    missingCommentIds.push(item.id);
+                    if (!categoriesToExpand.includes(item.categoryId)) {
+                        categoriesToExpand.push(item.categoryId);
+                    }
+                    return; // Skip further checks for this item
+                }
+
+                // Second: if marked as "No", require detailed remarks (min 10 chars)
+                // IMPORTANT: Check the LABEL, not the score, because autofail parameters
+                // have weight=0 even when marked as "Yes"
+                if (scoreData.label === 'No') {
+                    const comment = scoreData.comment?.trim() || '';
+                    if (comment.length < 10) {
+                        errors.push(`Detailed remark (min 10 chars) required for: ${item.title}`);
+                        missingCommentIds.push(item.id);
+                        if (!categoriesToExpand.includes(item.categoryId)) {
+                            categoriesToExpand.push(item.categoryId);
+                        }
+                    }
+                }
+            });
+        }
+
+        if (errors.length > 0) {
+            // Show only the FIRST error to avoid multiple toasts
+            toast.error(errors[0]);
+
+            // Ensure categories are open so we can scroll to them
+            if (categoriesToExpand.length > 0) {
+                setExpandedCategories(prev => [...new Set([...prev, ...categoriesToExpand])]);
+            }
+
+            // Scroll to the first error field
+            setTimeout(() => {
+                const firstErrorId = missingCommentIds[0];
+                const element = document.getElementById(`criterion-${firstErrorId}`);
+                if (element) {
+                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                    // Also try to focus the textarea if it exists
+                    const textarea = element.querySelector('textarea');
+                    if (textarea) {
+                        textarea.focus();
+                    }
+                }
+            }, 800);
+
+            return;
+        }
+
+        // Original logic: check for incomplete scoring
         const totalCriteria = activeVersion?.criteria?.length || 0;
         const scoredCount = Object.keys(scores).length;
 
@@ -356,7 +419,16 @@ export default function EvaluateCampaignPage() {
             toast.success('Evaluation submitted successfully!');
             router.push('/evaluate');
         } catch (err: any) {
-            toast.error(err.response?.data?.message || 'Failed to submit evaluation.');
+            console.error(err);
+            // Don't show toast for validation errors - frontend already handled them
+            const errorMsg = err.response?.data?.message || 'Failed to submit evaluation.';
+            const isValidationError = errorMsg.includes('required') ||
+                errorMsg.includes('incomplete') ||
+                errorMsg.includes('Detailed remarks');
+
+            if (!isValidationError) {
+                toast.error(errorMsg);
+            }
         } finally {
             setIsStarting(false);
         }
@@ -595,6 +667,7 @@ export default function EvaluateCampaignPage() {
                                 {items.map((criterion: any) => (
                                     <div
                                         key={criterion.id}
+                                        id={`criterion-${criterion.id}`}
                                         className="group bg-white/[0.02] hover:bg-white/[0.04] border border-white/5 hover:border-blue-500/30 rounded-3xl p-6 md:p-8 transition-all flex flex-col md:flex-row md:items-center justify-between gap-8 focus-within:ring-2 focus-within:ring-blue-500/20"
                                     >
                                         <div className="flex-1 space-y-2">

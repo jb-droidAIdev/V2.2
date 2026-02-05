@@ -38,15 +38,15 @@ export default function FailedAuditsPage() {
                     >
                         <ArrowLeft className="w-4 h-4" /> Back to Dashboard
                     </button>
-                    <h1 className="text-4xl font-black text-rose-500 tracking-tighter">Critical Fails</h1>
-                    <p className="text-slate-400 font-medium">Detailed log of failed evaluation parameters for selected campaigns.</p>
+                    <h1 className="text-4xl font-black text-rose-500 tracking-tighter">Critical Errors</h1>
+                    <p className="text-slate-400 font-medium">Detailed log of evaluation errors for selected campaigns.</p>
                 </div>
             </div>
 
             {isLoading ? (
                 <div className="h-[50vh] flex flex-col items-center justify-center space-y-4">
                     <Loader2 className="w-10 h-10 text-rose-500 animate-spin" />
-                    <p className="text-slate-400 font-medium animate-pulse">Retrieving Opportunities...</p>
+                    <p className="text-slate-400 font-medium animate-pulse">Retrieving Errors...</p>
                 </div>
             ) : (
                 <div className="glass rounded-[2.5rem] p-8 border border-white/5 shadow-2xl">
@@ -60,7 +60,7 @@ export default function FailedAuditsPage() {
                                     <th className="py-4">Form Category</th>
                                     <th className="py-4">Parameter</th>
                                     <th className="py-4">Auditor Remarks</th>
-                                    <th className="py-4 pr-4 text-right">Score</th>
+                                    <th className="py-4 pr-4 text-center">Impact</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-white/5">
@@ -88,12 +88,12 @@ export default function FailedAuditsPage() {
                                             </td>
                                             <td className="py-4">
                                                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider bg-white/5 px-2 py-1 rounded">
-                                                    {score.criterion?.categoryName || 'General'}
+                                                    {score.categoryLabel || score.criterion?.categoryName || 'General'}
                                                 </span>
                                             </td>
                                             <td className="py-4 max-w-[200px]">
-                                                <span className="text-xs font-bold text-rose-300 block break-words" title={score.criterion?.title}>
-                                                    {score.criterion?.title || 'Unknown Parameter'}
+                                                <span className="text-xs font-bold text-rose-300 block break-words" title={score.criterionTitle || score.criterion?.title}>
+                                                    {score.criterionTitle || score.criterion?.title || 'Unknown Parameter'}
                                                 </span>
                                             </td>
                                             <td className="py-4 max-w-[300px]">
@@ -103,8 +103,26 @@ export default function FailedAuditsPage() {
                                                     </p>
                                                 </div>
                                             </td>
-                                            <td className="py-4 pr-4 text-right">
-                                                <span className="text-rose-500 font-black text-sm">{audit.score}%</span>
+                                            <td className="py-4 pr-4 text-center">
+                                                {(() => {
+                                                    const cat = score.categoryLabel || score.criterion?.categoryName;
+                                                    const impactMap: Record<string, { label: string, style: string }> = {
+                                                        'Customer Critical': { label: 'Customer Impacting', style: 'bg-rose-500/20 text-rose-400 border-rose-500/20' },
+                                                        'Process Critical': { label: 'Process Defect', style: 'bg-amber-500/20 text-amber-400 border-amber-500/20' },
+                                                        'Business Critical': { label: 'Business Impacting', style: 'bg-blue-500/20 text-blue-400 border-blue-500/20' },
+                                                        'Compliance Critical': { label: '', style: '' },
+                                                        'Non Critical': { label: 'Standard Defect', style: 'bg-slate-500/20 text-slate-400 border-slate-500/20' }
+                                                    };
+                                                    const config = impactMap[cat] || { label: 'Critical Error', style: 'bg-slate-500/20 text-slate-400 border-slate-500/20' };
+
+                                                    if (!config.label) return null;
+
+                                                    return (
+                                                        <span className={`px-3 py-1 text-[10px] font-black rounded-lg border uppercase tracking-wider whitespace-nowrap ${config.style}`}>
+                                                            {config.label}
+                                                        </span>
+                                                    );
+                                                })()}
                                             </td>
                                         </tr>
                                     ))
@@ -118,7 +136,7 @@ export default function FailedAuditsPage() {
                             <div className="w-20 h-20 bg-white/5 rounded-3xl flex items-center justify-center mx-auto mb-6">
                                 <CheckCircle2 className="w-10 h-10 text-green-500" />
                             </div>
-                            <h3 className="text-white font-bold text-lg mb-2">No Critical Failures</h3>
+                            <h3 className="text-white font-bold text-lg mb-2">No Critical Errors</h3>
                             <p className="text-slate-500 font-bold uppercase text-[10px] tracking-widest">Great job! All parameters are clean.</p>
                         </div>
                     )}

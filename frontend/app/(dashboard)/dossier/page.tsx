@@ -478,6 +478,12 @@ export default function DossierPage() {
                     onCreate={renamingGroup ? handleRenameSubmit : handleCreateGroup}
                     initialValue={renamingGroup ? renamingGroup.name : ''}
                     mode={renamingGroup ? 'rename' : 'create'}
+                    suggestedNames={Array.from(new Set(users.map(u => (u.employeeTeam || '').trim())))
+                        .filter(team => {
+                            if (!team || team === 'Unassigned') return false;
+                            return !campaigns.some(c => c.name.toLowerCase().trim() === team.toLowerCase());
+                        })
+                        .sort()}
                 />
 
                 <UserFormModal

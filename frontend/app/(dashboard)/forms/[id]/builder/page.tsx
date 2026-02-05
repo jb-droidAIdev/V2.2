@@ -53,6 +53,8 @@ export default function FormBuilderPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
 
+    const [isChangeModalOpen, setIsChangeModalOpen] = useState(false);
+    const [changeSummary, setChangeSummary] = useState('');
     const [confirmModal, setConfirmModal] = useState<{
         isOpen: boolean;
         title: string;
@@ -73,16 +75,22 @@ export default function FormBuilderPage() {
 
     const fetchForm = async () => {
         try {
-            const res = await api.get(`/forms`);
-            // Finding the specific form from the list (since we don't have a single GET /forms/:id yet that simplifies things)
-            const specificForm = res.data.find((f: any) => f.id === id) ||
-                (await api.get('/forms/drafts')).data.find((f: any) => f.id === id);
+            const res = await api.get(`/forms/${id}`);
+            const specificForm = res.data;
 
             if (!specificForm) {
                 router.push('/forms');
                 return;
             }
+
             setForm(specificForm);
+
+            // If the form already has an active version, load its criteria and skip selection
+            if (specificForm.versions?.length > 0) {
+                const activeVersion = specificForm.versions[0];
+                setCriteria(activeVersion.criteria || []);
+                setMethodology('custom'); // Default to custom editor if we have data
+            }
         } catch (err) {
             console.error(err);
             router.push('/forms');
@@ -152,21 +160,28 @@ export default function FormBuilderPage() {
             return;
         }
 
-        setConfirmModal({
-            isOpen: true,
-            title: 'Publish Scorecard?',
-            message: 'This will create a new active version of the scorecard. Are you ready to publish?',
-            variant: 'success',
-            onConfirm: executeSave
-        });
+        // If it's an update, ask for a change summary first
+        if (form.isConfigured) {
+            setIsChangeModalOpen(true);
+        } else {
+            setConfirmModal({
+                isOpen: true,
+                title: 'Publish Scorecard?',
+                message: 'This will create a new active version of the scorecard. Are you ready to publish?',
+                variant: 'success',
+                onConfirm: executeSave
+            });
+        }
     };
 
     const executeSave = async () => {
         setIsSaving(true);
         setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        setIsChangeModalOpen(false);
         try {
             // 1. Create a version with these criteria
             await api.post(`/forms/${id}/versions`, {
+                changeLog: changeSummary || 'Manual configuration update',
                 categories: Array.from(new Set(criteria.map(c => c.categoryName))),
                 criteria: criteria.map((c, idx) => ({
                     categoryId: c.categoryId,
@@ -213,7 +228,17 @@ export default function FormBuilderPage() {
                     </button>
                     <div>
                         <h1 className="text-3xl font-black text-white tracking-tight">{form.name}</h1>
-                        <p className="text-slate-400 text-sm font-medium">Building Scorecard for <span className="text-blue-400">{form.teamName} Team</span></p>
+                        <div className="flex items-center gap-3">
+                            <p className="text-slate-400 text-sm font-medium">Building Scorecard for <span className="text-blue-400">{form.teamName} Team</span></p>
+                            {form.versions?.[0]?.changeLog && (
+                                <>
+                                    <span className="w-1 h-1 rounded-full bg-slate-700" />
+                                    <p className="text-[10px] font-black uppercase text-amber-500/80 tracking-widest bg-amber-500/5 px-2 py-0.5 rounded border border-amber-500/10">
+                                        Last Update: {form.versions[0].changeLog}
+                                    </p>
+                                </>
+                            )}
+                        </div>
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -473,6 +498,61 @@ export default function FormBuilderPage() {
                             )}
                         </div>
                     </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Change Summary Modal */}
+            <AnimatePresence>
+                {isChangeModalOpen && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => setIsChangeModalOpen(false)}
+                            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+                        />
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                            className="bg-[#161618] border border-white/10 rounded-2xl w-full max-w-md relative z-10 overflow-hidden shadow-2xl"
+                        >
+                            <div className="p-8 space-y-4">
+                                <div className="w-16 h-16 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center">
+                                    <FileText className="w-8 h-8" />
+                                </div>
+                                <div className="text-left">
+                                    <h3 className="text-2xl font-black text-white">Version Log</h3>
+                                    <p className="text-slate-400 text-sm mt-2 leading-relaxed font-medium">
+                                        Please summarize the changes made to this scorecard version.
+                                    </p>
+                                </div>
+                                <textarea
+                                    autoFocus
+                                    value={changeSummary}
+                                    onChange={(e) => setChangeSummary(e.target.value)}
+                                    placeholder="e.g. Added section for Compliance, updated weight for Active Listening..."
+                                    className="w-full bg-black/40 border border-white/10 rounded-xl p-4 text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none min-h-[120px] resize-none"
+                                />
+                            </div>
+                            <div className="p-6 bg-[#1c1c1e] border-t border-white/5 flex gap-3">
+                                <button
+                                    onClick={() => setIsChangeModalOpen(false)}
+                                    className="flex-1 py-3.5 border border-white/10 hover:bg-white/5 rounded-xl text-slate-400 font-bold transition-all text-xs uppercase tracking-[0.2em]"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={executeSave}
+                                    disabled={!changeSummary.trim()}
+                                    className="flex-1 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold transition-all text-xs uppercase tracking-[0.2em] shadow-lg disabled:opacity-50"
+                                >
+                                    Publish Version
+                                </button>
+                            </div>
+                        </motion.div>
+                    </div>
                 )}
             </AnimatePresence>
 

@@ -35,7 +35,8 @@ export default function AuditsPage() {
         status: '',
         campaign: '',
         dateFrom: '',
-        dateTo: ''
+        dateTo: '',
+        agentIds: [] as string[]
     });
 
     const [promptConfig, setPromptConfig] = useState<{
@@ -273,10 +274,14 @@ export default function AuditsPage() {
             }
         }
 
-        return matchesSearch && matchesStatus && matchesCampaign && matchesDate;
+        const matchesAgent = filters.agentIds.length === 0 || filters.agentIds.includes(audit.agentId);
+
+        return matchesSearch && matchesStatus && matchesCampaign && matchesDate && matchesAgent;
     });
 
     const campaigns = Array.from(new Set(audits.map(a => a.campaign?.name).filter(Boolean)));
+    const agents = Array.from(new Map(audits.map(a => [a.agentId, { id: a.agentId, name: a.agent.name }])).values())
+        .sort((a, b) => a.name.localeCompare(b.name));
 
     return (
         <div className="space-y-8 animate-in fade-in duration-700">
@@ -310,7 +315,9 @@ export default function AuditsPage() {
                 filters={filters}
                 setFilters={setFilters}
                 campaigns={campaigns}
+                agents={agents}
                 totalCount={filteredAudits.length}
+                onRefresh={fetchAudits}
             />
 
             <AuditTable

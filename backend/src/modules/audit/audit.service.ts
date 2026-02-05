@@ -480,7 +480,12 @@ export class AuditService {
         });
 
         if (!audit) throw new NotFoundException('Audit not found');
-        if (audit.auditorId !== auditorId) throw new ForbiddenException('Not your audit');
+
+        // Universal Access: Admins can autosave any session
+        const requestingUser = await this.prisma.user.findUnique({ where: { id: auditorId } });
+        if (audit.auditorId !== auditorId && requestingUser?.role !== 'ADMIN') {
+            throw new ForbiddenException('Not the owner of this audit session');
+        }
 
         // 1. Update Custom Fields using atomic upserts
         if (data.fieldValues) {
@@ -493,25 +498,32 @@ export class AuditService {
             ));
         }
 
-        // 2. Update Scores using atomic upserts
+        // 2. Update Scores using atomic upserts with snapshots for data integrity
         if (data.scores) {
-            await Promise.all(data.scores.map(item =>
-                this.prisma.auditScore.upsert({
+            await Promise.all(data.scores.map(item => {
+                const criterion = audit.formVersion.criteria.find(c => c.id === item.criterionId);
+                return this.prisma.auditScore.upsert({
                     where: { auditId_criterionId: { auditId: id, criterionId: item.criterionId } },
                     create: {
                         auditId: id,
                         criterionId: item.criterionId,
                         score: item.score,
                         comment: item.comment,
-                        isFailed: item.isFailed || false
+                        isFailed: item.isFailed || false,
+                        // Snapshot labels for historical integrity
+                        categoryLabel: criterion?.categoryName,
+                        criterionTitle: criterion?.title
                     },
                     update: {
                         score: item.score,
                         comment: item.comment,
-                        isFailed: item.isFailed
+                        isFailed: item.isFailed,
+                        // Update snapshots if they changed in a form edit (while audit is in progress)
+                        categoryLabel: criterion?.categoryName,
+                        criterionTitle: criterion?.title
                     }
-                })
-            ));
+                });
+            }));
         }
 
         // 3. Recalculate Live Score
@@ -543,10 +555,57 @@ export class AuditService {
         });
 
         if (!audit) throw new NotFoundException('Audit not found');
-        if (audit.auditorId !== auditorId) throw new ForbiddenException();
 
-        // 2. Final Score Verification
-        const { percent, isAutoFailed } = this.calculateScore(audit.formVersion.criteria, audit.scores);
+        // Universal Access: Admins can autosave any session
+        const requestingUser = await this.prisma.user.findUnique({ where: { id: auditorId } });
+        if (audit.auditorId !== auditorId && requestingUser?.role !== 'ADMIN') {
+            throw new ForbiddenException('Not the owner of this audit session');
+        }
+
+        // 2. Data Integrity Validation WITH FRESHEST DATA
+        // Fetch scores directly to ensure we have the absolute latest committed state
+        const dbScores = await this.prisma.auditScore.findMany({
+            where: { auditId: id },
+            include: { criterion: true }
+        });
+
+        // A. Completeness Check
+        const scoredCriteriaIds = new Set(dbScores.map(s => s.criterionId));
+        if (scoredCriteriaIds.size !== audit.formVersion.criteria.length) {
+            throw new BadRequestException(`Audit is incomplete. Scored ${scoredCriteriaIds.size} out of ${audit.formVersion.criteria.length} items.`);
+        }
+
+        // B. Mandatory remarks for "No" scores
+        // IMPORTANT: Check isFailed flag, not score value, because autofail parameters
+        // have weight=0 even when marked as "Yes"
+        const failedScoresWithoutRemarks = dbScores.filter(s => {
+            const hasValidComment = s.comment && s.comment.trim().length >= 10;
+            return s.isFailed && !hasValidComment;
+        });
+
+        if (failedScoresWithoutRemarks.length > 0) {
+            const names = failedScoresWithoutRemarks.map(s => s.criterion?.title || s.criterionId).join(', ');
+            throw new BadRequestException(`Detailed remarks required for failed items: ${names}`);
+        }
+
+
+
+        // 3. Final Score Verification & Snapshotting Enforcement
+        // Use the fresh scores for calculation too
+        const { percent, isAutoFailed } = this.calculateScore(audit.formVersion.criteria, dbScores);
+
+        // Ensure all historical labels are set on submission (fallback check)
+        await Promise.all(dbScores.map(score => {
+            if (!score.categoryLabel || !score.criterionTitle) {
+                return this.prisma.auditScore.update({
+                    where: { id: score.id },
+                    data: {
+                        categoryLabel: score.criterion?.categoryName,
+                        criterionTitle: score.criterion?.title
+                    }
+                });
+            }
+        }));
 
         // 3. Official Submission -> Auto Release protocol
         const now = new Date();

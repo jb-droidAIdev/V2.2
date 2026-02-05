@@ -8,6 +8,7 @@ interface CreateGroupModalProps {
     onCreate: (name: string) => void;
     initialValue?: string;
     mode?: 'create' | 'rename';
+    suggestedNames?: string[];
 }
 
 export default function CreateGroupModal({
@@ -15,7 +16,8 @@ export default function CreateGroupModal({
     onClose,
     onCreate,
     initialValue = '',
-    mode = 'create'
+    mode = 'create',
+    suggestedNames = []
 }: CreateGroupModalProps) {
     const [name, setName] = useState(initialValue);
 
@@ -70,6 +72,24 @@ export default function CreateGroupModal({
                                 placeholder={mode === 'rename' ? "e.g. Production Team A" : "e.g. Q4 Campaigns"}
                             />
                         </div>
+
+                        {mode === 'create' && suggestedNames.length > 0 && (
+                            <div className="space-y-3">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 italic ml-1">Suggestions from Dossier</label>
+                                <div className="flex flex-wrap gap-2">
+                                    {suggestedNames.map(s => (
+                                        <button
+                                            key={s}
+                                            type="button"
+                                            onClick={() => setName(s)}
+                                            className="px-3 py-1.5 rounded-lg bg-blue-500/5 hover:bg-blue-500/10 border border-blue-500/10 text-[10px] font-bold text-blue-400 transition-all"
+                                        >
+                                            {s}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         <div className="flex gap-3">
                             <button

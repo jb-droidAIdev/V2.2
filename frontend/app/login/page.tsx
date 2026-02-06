@@ -24,8 +24,10 @@ export default function LoginPage() {
         setIsLoading(true);
         setError('');
 
+        const sanitizedEmail = email.trim();
+
         try {
-            const response = await api.post('/auth/login', { email, password });
+            const response = await api.post('/auth/login', { email: sanitizedEmail, password });
 
             if (response.data.user.mustChangePassword) {
                 setTempUserData(response.data);

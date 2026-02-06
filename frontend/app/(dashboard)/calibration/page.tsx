@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Plus,
@@ -11,25 +12,37 @@ import {
     Search,
     Filter,
     Activity,
-    Target
+    Target,
+    BarChart3
 } from 'lucide-react';
-import api from '@/lib/api';
+import { CalibrationService, CalibrationSession } from '@/lib/calibration-service';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 export default function CalibrationPage() {
-    const [sessions, setSessions] = useState<any[]>([]);
+    const router = useRouter();
+    const [sessions, setSessions] = useState<CalibrationSession[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
+    const [userRole, setUserRole] = useState<string>('');
 
     useEffect(() => {
+        const userStr = localStorage.getItem('user');
+        if (userStr) {
+            try {
+                const u = JSON.parse(userStr);
+                setUserRole(u.role);
+            } catch (e) {
+                console.error('Failed to parse user', e);
+            }
+        }
         fetchSessions();
     }, []);
 
     const fetchSessions = async () => {
         try {
-            const res = await api.get('/calibration');
+            const res = await CalibrationService.getSessions();
             setSessions(res.data);
         } catch (err) {
             console.error(err);
@@ -43,6 +56,24 @@ export default function CalibrationPage() {
         s.title.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
+    const canCreate = ['QA', 'QA_TL', 'QA_MANAGER', 'ADMIN'].includes(userRole);
+
+    const getStatusColor = (status: string) => {
+        switch (status) {
+            case 'SCHEDULED': return "bg-blue-500/10 text-blue-400 border-blue-500/20";
+            case 'ANCHOR_PENDING': return "bg-amber-500/10 text-amber-400 border-amber-500/20";
+            case 'SCORING_OPEN': return "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+            case 'SCORING_CLOSED': return "bg-purple-500/10 text-purple-400 border-purple-500/20";
+            case 'COMPLETED': return "bg-slate-500/10 text-slate-400 border-white/10";
+            case 'CANCELLED': return "bg-red-500/10 text-red-400 border-red-500/20";
+            default: return "bg-white/5 text-slate-400 border-white/10";
+        }
+    };
+
+    const getStatusLabel = (status: string) => {
+        return status.replace('_', ' ');
+    };
+
     return (
         <div className="space-y-8 animate-in fade-in duration-700 pb-20">
             {/* Header */}
@@ -52,21 +83,23 @@ export default function CalibrationPage() {
                     <p className="text-slate-400 font-medium italic">Standardize quality performance across your workforce.</p>
                 </div>
 
-                <button
-                    disabled
-                    className="flex items-center gap-2 bg-blue-600/50 cursor-not-allowed border border-blue-500/20 text-white/50 px-6 py-3 rounded-2xl font-bold transition-all"
-                >
-                    <Plus className="w-5 h-5" />
-                    New Session (Coming Soon)
-                </button>
+                {canCreate && (
+                    <button
+                        onClick={() => router.push('/calibration/new')}
+                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-2xl font-bold transition-all shadow-lg shadow-blue-600/20 active:scale-95"
+                    >
+                        <Plus className="w-5 h-5" />
+                        New Session
+                    </button>
+                )}
             </div>
 
             {/* Stats Overview */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {[
-                    { label: 'Active Sessions', value: sessions.filter(s => s.status === 'OPEN').length, icon: Activity, color: 'text-emerald-400' },
-                    { label: 'Scheduled', value: sessions.filter(s => s.status === 'SCHEDULED').length, icon: Calendar, color: 'text-blue-400' },
-                    { label: 'Avg. Accuracy', value: '88%', icon: Target, color: 'text-amber-400' },
+                    { label: 'Live Sessions', value: sessions.filter(s => s.status === 'SCORING_OPEN').length, icon: Activity, color: 'text-emerald-400' },
+                    { label: 'Pending Anchors', value: sessions.filter(s => s.status === 'ANCHOR_PENDING').length, icon: Target, color: 'text-amber-400' },
+                    { label: 'Completed', value: sessions.filter(s => s.status === 'COMPLETED').length, icon: BarChart3, color: 'text-purple-400' },
                 ].map((stat, i) => (
                     <motion.div
                         key={i}
@@ -95,13 +128,13 @@ export default function CalibrationPage() {
                         placeholder="Search sessions..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full bg-[#0f172a]/40 border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none transition-all"
+                        className="w-full bg-[#0f172a]/40 border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none transition-all text-white"
                     />
                 </div>
                 <div className="flex gap-4">
                     <button className="flex items-center gap-2 bg-white/5 border border-white/10 text-slate-400 px-6 py-3 rounded-2xl font-bold text-sm hover:text-white transition-all">
                         <Filter className="w-4 h-4" />
-                        Status
+                        Filter
                     </button>
                 </div>
             </div>
@@ -126,6 +159,7 @@ export default function CalibrationPage() {
                         {filteredSessions.map((session, i) => (
                             <motion.div
                                 key={session.id}
+                                onClick={() => router.push(`/calibration/${session.id}`)}
                                 initial={{ opacity: 0, x: -20 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 transition={{ delay: i * 0.05 }}
@@ -135,7 +169,12 @@ export default function CalibrationPage() {
 
                                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                                     <div className="flex items-center gap-6">
-                                        <div className="w-14 h-14 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+                                        <div className={cn(
+                                            "w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform",
+                                            session.status === 'COMPLETED' ? "bg-gradient-to-br from-purple-600 to-indigo-600" :
+                                                session.status === 'SCORING_OPEN' ? "bg-gradient-to-br from-emerald-500 to-teal-600" :
+                                                    "bg-gradient-to-br from-blue-600 to-indigo-600"
+                                        )}>
                                             <Activity className="w-7 h-7 text-white" />
                                         </div>
                                         <div>
@@ -156,11 +195,9 @@ export default function CalibrationPage() {
                                     <div className="flex items-center gap-6">
                                         <div className={cn(
                                             "px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] border",
-                                            session.status === 'OPEN' ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
-                                                session.status === 'CLOSED' ? "bg-slate-500/10 text-slate-400 border-white/10" :
-                                                    "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                                            getStatusColor(session.status)
                                         )}>
-                                            {session.status}
+                                            {getStatusLabel(session.status)}
                                         </div>
                                         <div className="p-3 bg-white/5 rounded-xl text-slate-500 group-hover:bg-blue-600 group-hover:text-white transition-all">
                                             <ChevronRight className="w-5 h-5" />

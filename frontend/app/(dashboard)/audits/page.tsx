@@ -46,6 +46,7 @@ export default function AuditsPage() {
         placeholder?: string;
         onSubmit: (val: string) => void;
         minLength?: number;
+        required?: boolean;
     }>({
         isOpen: false,
         title: '',
@@ -198,29 +199,35 @@ export default function AuditsPage() {
 
         const stageTitle = stage === 'qa' ? 'QA Verdict' : 'Final Verdict';
         const message = verdict === 'ACCEPTED'
-            ? 'Provide a note for this acceptance (optional).'
-            : 'Provide a reason for rejection (required).';
+            ? 'You may provide an optional note for this acceptance.'
+            : 'You must provide a detailed reason for this rejection (minimum 30 characters).';
 
         setPromptConfig({
             isOpen: true,
             title: stageTitle,
             message: message,
-            placeholder: 'Type your feedback here...',
-            minLength: verdict === 'REJECTED' ? 10 : 0,
+            placeholder: verdict === 'ACCEPTED' ? 'Optional feedback...' : 'Explain why you are rejecting this dispute...',
+            minLength: verdict === 'REJECTED' ? 30 : 0,
+            required: verdict === 'REJECTED',
             onSubmit: async (comment) => {
-                let endpoint = `/disputes/item/${itemId}/verdict`;
-                let payload: any = { verdict };
-
-                if (stage === 'qa') {
-                    payload.comment = comment;
-                } else {
-                    endpoint = `/disputes/item/${itemId}/final-verdict`;
-                    payload.comment = comment;
+                if (!disputeInfo?.id) {
+                    toast.error('Dispute information not found');
+                    return;
                 }
+
+                const endpoint = stage === 'qa'
+                    ? `/disputes/${disputeInfo.id}/qa-verdict`
+                    : `/disputes/${disputeInfo.id}/final-verdict`;
+
+                const payload = {
+                    itemId,
+                    verdict,
+                    comment
+                };
 
                 setIsSubmittingVerdict(true);
                 try {
-                    await api.post(endpoint, payload);
+                    await api.patch(endpoint, payload);
                     toast.success('Verdict submitted');
                     handlePreviewAudit(previewTarget.id);
                 } catch (err: any) {

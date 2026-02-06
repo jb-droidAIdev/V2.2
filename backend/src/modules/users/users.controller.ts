@@ -2,15 +2,26 @@ import { Controller, Get, UseGuards, Param, Req, Post, Body, Delete, Patch } fro
 import { UsersService } from './users.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
+import { PermissionsGuard } from '../auth/permissions.guard';
+import { Permissions } from '../auth/permissions.decorator';
+import { Permission } from '../auth/permissions.service';
+
 
 @Controller('users')
-@UseGuards(AuthGuard('jwt'), RolesGuard)
+@UseGuards(AuthGuard('jwt'), RolesGuard, PermissionsGuard)
 export class UsersController {
     constructor(private readonly usersService: UsersService) { }
 
     @Get()
-    async findAll() {
-        return this.usersService.findAll();
+    async findAll(@Req() req: any) {
+        return this.usersService.findAll(req.user);
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Permissions(Permission.USER_MANAGE)
+    @Post()
+    async create(@Body() data: any) {
+        return this.usersService.create(data);
     }
 
     @Get('teams/dossier')
@@ -24,18 +35,21 @@ export class UsersController {
     }
 
     @UseGuards(AuthGuard('jwt'))
+    @Permissions(Permission.USER_MANAGE)
     @Post('bulk')
     async bulkCreate(@Body() users: any[]) {
         return this.usersService.bulkCreate(users);
     }
 
     @UseGuards(AuthGuard('jwt'))
+    @Permissions(Permission.USER_MANAGE)
     @Patch('teams/rename')
     async renameTeam(@Body() body: { oldName: string; newName: string }) {
         return this.usersService.bulkUpdateTeam(body.oldName, body.newName);
     }
 
     @UseGuards(AuthGuard('jwt'))
+    @Permissions(Permission.USER_MANAGE)
     @Patch(':id')
     async update(@Param('id') id: string, @Body() data: any) {
         return this.usersService.updateUser(id, data);
@@ -48,12 +62,14 @@ export class UsersController {
     }
 
     @UseGuards(AuthGuard('jwt'))
+    @Permissions(Permission.USER_MANAGE)
     @Post(':id/campaigns')
     async updateCampaigns(@Param('id') id: string, @Body() body: { campaignIds: string[] }) {
         return this.usersService.assignCampaigns(id, body.campaignIds);
     }
 
     @UseGuards(AuthGuard('jwt'))
+    @Permissions(Permission.USER_MANAGE)
     @Delete(':id')
     async remove(@Param('id') id: string) {
         return this.usersService.remove(id);

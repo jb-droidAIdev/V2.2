@@ -10,13 +10,13 @@ import { Role } from '@prisma/client';
 export class DisputeController {
     constructor(private readonly disputeService: DisputeService) { }
 
-    @Roles(Role.OPS_TL, Role.QA_TL, Role.ADMIN)
+    @Roles(Role.OPS_TL, Role.OPS_MANAGER, Role.QA_MANAGER, Role.SDM, Role.ADMIN)
     @Post()
     create(@Body() body: any, @Request() req: any) {
         return this.disputeService.createDispute(body.auditId, req.user.id, body);
     }
 
-    @Roles(Role.QA, Role.QA_TL, Role.ADMIN)
+    @Roles(Role.QA, Role.QA_TL, Role.QA_MANAGER, Role.ADMIN)
     @Patch(':id/qa-verdict')
     qaVerdict(@Param('id') id: string, @Body() body: any, @Request() req: any) {
         return this.disputeService.qaVerdict(id, req.user.id, body.itemId, {
@@ -25,13 +25,13 @@ export class DisputeController {
         });
     }
 
-    @Roles(Role.OPS_TL, Role.QA_TL, Role.ADMIN)
+    @Roles(Role.OPS_TL, Role.OPS_MANAGER, Role.QA_MANAGER, Role.SDM, Role.ADMIN)
     @Post(':id/reappeal')
     reappeal(@Param('id') id: string, @Body() body: any, @Request() req: any) {
         return this.disputeService.reappeal(id, req.user.id, body);
     }
 
-    @Roles(Role.ADMIN)
+    @Roles(Role.QA_TL, Role.ADMIN)
     @Patch(':id/final-verdict')
     finalVerdict(@Param('id') id: string, @Body() body: any, @Request() req: any) {
         return this.disputeService.finalVerdict(id, req.user.id, body.itemId, {

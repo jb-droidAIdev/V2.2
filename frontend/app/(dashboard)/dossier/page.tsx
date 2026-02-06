@@ -183,8 +183,9 @@ export default function DossierPage() {
                 await api.patch(`/users/${editingUser.id}`, data);
                 toast.success('User updated successfully');
             } else {
-                await api.post('/users', { ...data, password: 'Password123!' }); // Default password for new users
-                toast.success('User created successfully');
+                const res = await api.post('/users', { ...data, password: 'Standard123!' });
+                const userEmail = res.data.email;
+                toast.success(`User created safely. Username: ${userEmail} | Password: Standard123!`);
             }
             fetchData();
         } catch (err: any) {
@@ -345,7 +346,7 @@ export default function DossierPage() {
                     </div>
 
                     <div className="flex items-center gap-3">
-                        {userRole === 'ADMIN' && (
+                        {['ADMIN', 'QA_TL', 'QA_MANAGER'].includes(userRole) && (
                             <div className="flex items-center gap-2">
                                 <button
                                     onClick={() => setIsCreatingGroup(true)}
@@ -388,7 +389,7 @@ export default function DossierPage() {
                 </div>
 
                 {/* View Mode Toggle */}
-                {userRole === 'ADMIN' && (
+                {['ADMIN', 'QA_TL', 'QA_MANAGER'].includes(userRole) && (
                     <div className="flex justify-center">
                         <div className="bg-[#0f172a]/40 p-1.5 rounded-2xl border border-white/10 flex gap-1 shadow-inner">
                             <button
@@ -478,7 +479,14 @@ export default function DossierPage() {
                     onCreate={renamingGroup ? handleRenameSubmit : handleCreateGroup}
                     initialValue={renamingGroup ? renamingGroup.name : ''}
                     mode={renamingGroup ? 'rename' : 'create'}
-                    suggestedNames={Array.from(new Set(users.map(u => (u.employeeTeam || '').trim())))
+                    suggestedNames={Array.from(new Set(
+                        users
+                            .filter(u => {
+                                if (viewMode === 'admin') return ['ADMIN', 'QA', 'QA_TL', 'QA_MANAGER', 'OPS_TL', 'OPS_MANAGER', 'SDM'].includes(u.role);
+                                return u.role === 'AGENT';
+                            })
+                            .map(u => (u.employeeTeam || '').trim())
+                    ))
                         .filter(team => {
                             if (!team || team === 'Unassigned') return false;
                             return !campaigns.some(c => c.name.toLowerCase().trim() === team.toLowerCase());
@@ -491,7 +499,13 @@ export default function DossierPage() {
                     onClose={() => setIsUserModalOpen(false)}
                     onSubmit={handleUserSubmit}
                     initialData={editingUser}
-                    campaigns={campaigns.map(c => c.name)}
+                    viewMode={viewMode}
+                    campaigns={campaigns
+                        .filter(c => {
+                            const targetType = viewMode === 'admin' ? 'ADMIN' : 'USER';
+                            return c.type === targetType || (!c.type && targetType === 'USER');
+                        })
+                        .map(c => c.name)}
                 />
 
                 <AssignMemberModal

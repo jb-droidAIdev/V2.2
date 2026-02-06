@@ -237,7 +237,7 @@ export default function FormsPage() {
         );
     }
 
-    if (!['ADMIN', 'QA_TL'].includes(userRole)) {
+    if (!['ADMIN', 'QA_TL', 'QA_MANAGER'].includes(userRole)) {
         router.push('/dashboard');
         return null;
     }

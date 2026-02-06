@@ -29,7 +29,7 @@ export default function PromptModal({
     submitText = 'Submit',
     cancelText = 'Cancel',
     minLength = 0,
-    required = true
+    required = false
 }: PromptModalProps) {
     const [value, setValue] = useState(initialValue);
     const [error, setError] = useState('');
@@ -71,26 +71,26 @@ export default function PromptModal({
                         initial={{ opacity: 0, scale: 0.9, y: 20 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}
                         exit={{ opacity: 0, scale: 0.9, y: 20 }}
-                        className="relative w-full max-w-lg bg-[#0f172a] border border-white/10 rounded-[2.5rem] p-10 shadow-2xl overflow-hidden"
+                        className="relative w-full max-w-3xl bg-[#0f172a] border border-white/10 rounded-[2.5rem] p-12 shadow-2xl overflow-hidden"
                     >
                         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-64 bg-blue-500/10 blur-[80px] -z-10" />
 
                         <div className="flex flex-col space-y-6">
                             <div className="flex items-center gap-4">
-                                <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center">
-                                    <MessageSquare className="w-6 h-6 text-blue-500" />
+                                <div className="w-16 h-16 bg-blue-500/10 rounded-2xl flex items-center justify-center">
+                                    <MessageSquare className="w-8 h-8 text-blue-500" />
                                 </div>
-                                <div className="space-y-0.5">
-                                    <h3 className="text-xl font-black text-white tracking-tight leading-tight">
+                                <div className="space-y-1">
+                                    <h3 className="text-3xl font-black text-white tracking-tight leading-tight">
                                         {title}
                                     </h3>
-                                    <p className="text-slate-400 text-xs font-bold uppercase tracking-widest opacity-70">
+                                    <p className="text-slate-400 text-sm font-bold uppercase tracking-widest opacity-70">
                                         User Input Required
                                     </p>
                                 </div>
                             </div>
 
-                            <p className="text-slate-300 text-sm font-medium leading-relaxed">
+                            <p className="text-slate-300 text-base font-medium leading-relaxed">
                                 {message}
                             </p>
 
@@ -104,7 +104,7 @@ export default function PromptModal({
                                             setError('');
                                         }}
                                         placeholder={placeholder}
-                                        className="w-full bg-[#020617]/50 border border-white/10 rounded-2xl py-4 px-5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-slate-600 font-medium resize-none min-h-[120px]"
+                                        className="w-full bg-[#020617]/50 border border-white/10 rounded-2xl py-5 px-6 text-white text-base focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-slate-600 font-medium resize-none min-h-[180px]"
                                     />
                                     {error && (
                                         <p className="text-red-400 text-[10px] font-black uppercase tracking-widest ml-1 animate-pulse">
@@ -117,13 +117,13 @@ export default function PromptModal({
                                     <button
                                         type="button"
                                         onClick={onClose}
-                                        className="flex-1 px-6 py-4 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 font-bold transition-all"
+                                        className="flex-1 px-8 py-5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 font-bold text-base transition-all"
                                     >
                                         {cancelText}
                                     </button>
                                     <button
                                         type="submit"
-                                        className="flex-3 px-8 py-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold transition-all shadow-lg shadow-blue-600/20 active:scale-95 flex items-center justify-center gap-2"
+                                        className="flex-3 px-10 py-5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-base transition-all shadow-lg shadow-blue-600/20 active:scale-95 flex items-center justify-center gap-2"
                                     >
                                         <span>{submitText}</span>
                                     </button>

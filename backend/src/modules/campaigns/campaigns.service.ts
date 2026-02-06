@@ -6,8 +6,24 @@ import { Campaign } from '@prisma/client';
 export class CampaignsService {
     constructor(private prisma: PrismaService) { }
 
-    async findAll() {
+    async findAll(user?: any) {
+        let where: any = { isActive: true };
+
+        if (user) {
+            const role = String(user.role || '').toUpperCase();
+            const isSuperAdmin = ['ADMIN', 'QA_MANAGER'].includes(role);
+
+            if (!isSuperAdmin) {
+                // Restricted managers see their assignments + ADMIN folders
+                where.OR = [
+                    { qaAssignments: { some: { userId: user.id } } },
+                    { type: 'ADMIN' }
+                ];
+            }
+        }
+
         return this.prisma.campaign.findMany({
+            where,
             include: {
                 _count: {
                     select: { qaAssignments: true, forms: true }
@@ -23,7 +39,9 @@ export class CampaignsService {
             select: { role: true, name: true, employeeTeam: true }
         });
 
-        const isAdmin = user && ['ADMIN', 'QA_TL', 'OPS_TL'].includes(user.role);
+        // ADMIN and QA_MANAGER still see everything. 
+        // QA_TL, OPS_TL, OPS_MANAGER, SDM are now restricted to their assignments per user request.
+        const isSuperAdmin = user && ['ADMIN', 'QA_MANAGER'].includes(user.role);
 
         // 1. Get all active forms first - they are the "Source of Truth" for what can be audited
         const activeForms = await this.prisma.monitoringForm.findMany({
@@ -39,28 +57,30 @@ export class CampaignsService {
 
         // 2. Define campaign visibility
         let campaigns;
-        if (isAdmin) {
-            // Admins see all campaigns that ARE evaluate-able
+        if (isSuperAdmin) {
+            // Super Admins see all campaigns that ARE evaluate-able
             campaigns = await this.prisma.campaign.findMany({
                 where: { isActive: true },
-                select: { id: true, name: true }
+                select: { id: true, name: true, type: true }
             });
         } else {
-            // Regular QAs only see active campaigns they are explicitly assigned to
+            // Regular QAs and restricted Managers only see active campaigns they are explicitly assigned to
             campaigns = await this.prisma.campaign.findMany({
                 where: {
                     isActive: true,
                     qaAssignments: { some: { userId } }
                 },
-                select: { id: true, name: true }
+                select: { id: true, name: true, type: true }
             });
         }
 
         // 3. Final Filter: Only return campaigns that have an active form (via ID or Team Name)
-        return campaigns.filter(campaign =>
-            activeCampaignIds.has(campaign.id) ||
-            activeTeamNames.has(campaign.name)
-        );
+        // AND are of type USER (not ADMIN organizational folders)
+        return campaigns.filter(campaign => {
+            const hasActiveForm = activeCampaignIds.has(campaign.id) || activeTeamNames.has(campaign.name);
+            const isUserCampaign = (campaign as any).type !== 'ADMIN';
+            return hasActiveForm && isUserCampaign;
+        });
     }
 
     async findOneDetail(id: string) {

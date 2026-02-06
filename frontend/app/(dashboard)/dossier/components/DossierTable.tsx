@@ -20,7 +20,7 @@ export default function DossierTable({ users, onDelete, onEdit, onRemoveFromGrou
         );
     }
 
-    const isAdmin = userRole === 'ADMIN';
+    const isAdmin = ['ADMIN', 'QA_TL', 'QA_MANAGER'].includes(userRole || '');
 
     return (
         <div className="overflow-x-auto no-scrollbar">
@@ -95,7 +95,7 @@ export default function DossierTable({ users, onDelete, onEdit, onRemoveFromGrou
                                             <Pencil className="w-3.5 h-3.5" />
                                         </button>
 
-                                        {['QA', 'QA_TL'].includes(item.role) && (
+                                        {['QA', 'QA_TL', 'QA_MANAGER', 'OPS_TL', 'OPS_MANAGER', 'SDM'].includes(item.role) && (
                                             <button
                                                 onClick={() => onManageCampaigns(item)}
                                                 className="p-1.5 hover:bg-emerald-500/10 text-emerald-400 rounded-lg transition-colors"

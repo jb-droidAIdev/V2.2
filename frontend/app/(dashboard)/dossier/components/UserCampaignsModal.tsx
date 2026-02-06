@@ -119,7 +119,7 @@ export default function UserCampaignsModal({
                             <div>
                                 <h3 className="text-xl font-black text-white tracking-tight">Campaign Access</h3>
                                 <p className="text-slate-500 text-xs mt-1 font-medium">
-                                    Manage which campaigns <span className="text-blue-400 font-bold">{user.name}</span> can audit.
+                                    Manage which campaigns <span className="text-blue-400 font-bold">{user.name}</span> can access.
                                 </p>
                             </div>
                             <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">

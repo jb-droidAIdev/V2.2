@@ -116,12 +116,16 @@ export default function EvaluateCampaignPage() {
                 if (auditData.scores) {
                     const resumedScores: any = {};
                     auditData.scores.forEach((s: any) => {
-                        let label = 'No';
+                        let label = 'Yes';
                         if (s.score === -1) label = 'N/A';
-                        else if (s.score > 0) label = 'Yes';
-                        // Note: If score is 0 and weight is 0, we default to 'No' for resumption 
-                        // unless we start storing the specific choice in DB.
-                        resumedScores[s.criterionId] = { score: s.score, comment: s.comment, label };
+                        else if (s.isFailed) label = 'No';
+
+                        resumedScores[s.criterionId] = {
+                            score: s.score,
+                            comment: s.comment,
+                            isFailed: s.isFailed,
+                            label
+                        };
                     });
                     setScores(resumedScores);
                 }
@@ -207,10 +211,16 @@ export default function EvaluateCampaignPage() {
             if (auditData.scores) {
                 const resumedScores: any = {};
                 auditData.scores.forEach((s: any) => {
-                    let label = 'No';
+                    let label = 'Yes';
                     if (s.score === -1) label = 'N/A';
-                    else if (s.score > 0) label = 'Yes';
-                    resumedScores[s.criterionId] = { score: s.score, comment: s.comment, label };
+                    else if (s.isFailed) label = 'No';
+
+                    resumedScores[s.criterionId] = {
+                        score: s.score,
+                        comment: s.comment,
+                        isFailed: s.isFailed,
+                        label
+                    };
                 });
                 setScores(resumedScores);
             }
@@ -477,7 +487,7 @@ export default function EvaluateCampaignPage() {
         return acc;
     }, {}) || {};
 
-    const isAdmin = ['ADMIN', 'QA_TL', 'OPS_TL'].includes(userRole);
+    const isAdmin = ['ADMIN', 'QA_TL', 'QA_MANAGER', 'OPS_TL', 'OPS_MANAGER', 'SDM'].includes(userRole);
 
     if (isLoading) {
         return (

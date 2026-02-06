@@ -23,12 +23,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import Image from 'next/image';
 
 const menuItems = [
-    { name: 'Dashboard', icon: LayoutDashboard, href: '/dashboard', roles: ['ADMIN', 'QA_TL', 'OPS_TL', 'QA', 'AGENT'] },
-    { name: 'Dossier', icon: Users, href: '/dossier', roles: ['ADMIN', 'QA_TL', 'OPS_TL', 'QA'] },
-    { name: 'Forms', icon: FileText, href: '/forms', roles: ['ADMIN', 'QA_TL'] },
-    { name: 'Audits', icon: ClipboardCheck, href: '/audits', roles: ['ADMIN', 'QA_TL', 'OPS_TL', 'QA', 'AGENT'] },
-    { name: 'Evaluate', icon: Zap, href: '/evaluate', roles: ['ADMIN', 'QA_TL', 'QA'] },
-    { name: 'Calibration', icon: Target, href: '/calibration', roles: ['ADMIN', 'QA_TL', 'QA'] },
+    { name: 'Dashboard', icon: LayoutDashboard, href: '/dashboard', roles: ['ADMIN', 'QA_TL', 'QA_MANAGER', 'OPS_TL', 'OPS_MANAGER', 'SDM', 'QA', 'AGENT'] },
+    { name: 'Dossier', icon: Users, href: '/dossier', roles: ['ADMIN', 'QA_TL', 'QA_MANAGER', 'OPS_TL', 'OPS_MANAGER', 'SDM', 'QA'] },
+    { name: 'Forms', icon: FileText, href: '/forms', roles: ['ADMIN', 'QA_TL', 'QA_MANAGER'] },
+    { name: 'Audits', icon: ClipboardCheck, href: '/audits', roles: ['ADMIN', 'QA_TL', 'QA_MANAGER', 'OPS_TL', 'OPS_MANAGER', 'SDM', 'QA', 'AGENT'] },
+    { name: 'Evaluate', icon: Zap, href: '/evaluate', roles: ['ADMIN', 'QA_TL', 'QA_MANAGER', 'QA'] },
+    { name: 'Calibration', icon: Target, href: '/calibration', roles: ['ADMIN', 'QA_TL', 'QA_MANAGER', 'QA', 'OPS_MANAGER', 'SDM', 'OPS_TL'] },
 ];
 
 export default function Sidebar() {

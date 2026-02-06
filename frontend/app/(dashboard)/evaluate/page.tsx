@@ -86,7 +86,7 @@ export default function EvaluatePage() {
         agent.eid?.toLowerCase().includes(agentSearch.toLowerCase())
     );
 
-    const isAdmin = ['ADMIN', 'QA_TL', 'OPS_TL'].includes(userRole);
+    const isAdmin = ['ADMIN', 'QA_TL', 'QA_MANAGER', 'OPS_TL', 'OPS_MANAGER', 'SDM'].includes(userRole);
 
     if (isLoading) {
         return (

@@ -135,7 +135,7 @@ function CollapsibleGroup({
 
                 <div className="flex items-center gap-4">
                     {/* Folder Options Menu - ADMIN ONLY */}
-                    {title !== 'Unassigned' && userRole === 'ADMIN' && (
+                    {title !== 'Unassigned' && ['ADMIN', 'QA_TL', 'QA_MANAGER'].includes(userRole || '') && (
                         <div className="relative" ref={menuRef}>
                             <button
                                 onClick={(e) => { e.stopPropagation(); onToggleMenu(); }}

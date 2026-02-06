@@ -19,6 +19,29 @@ export class DashboardService {
         auditorId?: string | string[];
         granularity?: 'day' | 'week' | 'month';
     }, user: any) {
+        const role = String(user.role || '').toUpperCase();
+        const restrictedRoles = ['QA_TL', 'QATL', 'OPS_TL', 'OPSTL', 'OPS_MANAGER', 'OPSMANAGER', 'SDM', 'QA'];
+        const isStaff = role !== 'AGENT';
+
+        console.log(`[DASHBOARD] getStats Entry | User: ${user.id} | Role: ${role}`);
+
+        // [MANDATORY ASSIGNMENT CHECK] 
+        // If user is in a restricted role and has no campaign assignments, return blank data immediately.
+        let assignedCampaignIds: string[] = [];
+        if (restrictedRoles.includes(role)) {
+            const userAssignments = await this.prisma.campaignQA.findMany({
+                where: { userId: user.id, isActive: true },
+                select: { campaignId: true }
+            });
+
+            assignedCampaignIds = userAssignments.map(a => a.campaignId);
+
+            if (assignedCampaignIds.length === 0) {
+                console.log(`[DASHBOARD] Restricted user ${user.id} has no assignments - returning absolute blank state.`);
+                return this.getEmptyStats();
+            }
+        }
+
         const where: any = {
             status: { in: [AuditStatus.SUBMITTED, AuditStatus.RELEASED, AuditStatus.DISPUTED, AuditStatus.REAPPEALED] }
         };
@@ -29,7 +52,8 @@ export class DashboardService {
         // Helper to normalize input (handle both ?key=1,2 and multiple ?key=1&key=2)
         const normalizeArray = (val: any) => {
             if (!val) return [];
-            return Array.isArray(val) ? val : val.split(',').filter(Boolean);
+            const arr = Array.isArray(val) ? val : val.split(',');
+            return arr.map((v: any) => String(v).trim()).filter(Boolean);
         };
 
         // 1. Date Range
@@ -106,13 +130,22 @@ export class DashboardService {
         }
 
         // 8. Role-based Security & Governance
-        if (user.role === Role.AGENT) {
+        if (role === 'AGENT') {
             where.agentId = user.id; // Override if it's an agent viewing their own data
-        } else if ([Role.QA_TL, Role.OPS_TL].includes(user.role)) {
-            // Visibility limited to their own team if defined
-            if (user.employeeTeam) {
-                where.agent = { ...where.agent, employeeTeam: user.employeeTeam };
+        } else if (restrictedRoles.includes(role)) {
+            const assignedIds = assignedCampaignIds;
+            // Intersect with existing filters
+            if (where.campaignId && where.campaignId.in) {
+                const requested = where.campaignId.in;
+                const intersected = requested.filter((id: string) => assignedIds.includes(id));
+                if (intersected.length === 0) return this.getEmptyStats();
+                where.campaignId = { in: intersected };
+            } else {
+                where.campaignId = { in: assignedIds };
             }
+        } else if (!isStaff) {
+            // Further restricted roles (if any) only see their own team
+            where.agent = { ...where.agent, employeeTeam: user.employeeTeam };
         }
 
         // Clean up empty objects to help Prisma optimizer
@@ -201,7 +234,7 @@ export class DashboardService {
 
         const categoryAggregation = failedScores.reduce((acc, curr) => {
             // Prioritize snapshot labels for historical integrity, fallback to live relation
-            const cat = curr.categoryLabel || curr.criterion?.categoryName || 'General';
+            const cat = (curr.categoryLabel || curr.criterion?.categoryName || 'General').trim();
             const title = curr.criterionTitle || curr.criterion?.title || 'Unknown Parameter';
 
             if (!acc[cat]) {
@@ -248,6 +281,148 @@ export class DashboardService {
         // Sort by average score descending
         agentScores.sort((a, b) => b.avgScore - a.avgScore);
 
+        // 4. Zero Tolerance Policy Tracking
+        let policyProgress = null;
+        let activeProgressions = [];
+
+        // Single Agent Detection Logic:
+        const filteredAgentIds = normalizeArray(filters.agentId);
+        let targetAgentId = null;
+        if (filteredAgentIds.length === 1) {
+            targetAgentId = filteredAgentIds[0];
+        } else if (agentScores.length === 1) {
+            targetAgentId = agentScores[0].agentId;
+        } else if (user.role === Role.AGENT) {
+            targetAgentId = user.id;
+        }
+
+        // For Management: Calculate all active progressions across the scope
+        if (user.role !== Role.AGENT) {
+            // Fetch ALL failures for ALL agents in scope, plus 30-day lookback for window context
+            const bufferStartDate = subDays(startDate, 30);
+            const allFailuresInScope = await this.prisma.auditScore.findMany({
+                where: {
+                    isFailed: true,
+                    audit: {
+                        ...where,
+                        submittedAt: { gte: bufferStartDate, lte: endDate }
+                    }
+                },
+                select: {
+                    categoryLabel: true,
+                    criterion: { select: { categoryName: true } },
+                    audit: {
+                        select: {
+                            agentId: true,
+                            submittedAt: true,
+                            agent: { select: { name: true, employeeTeam: true } },
+                            campaign: { select: { name: true } }
+                        }
+                    }
+                }
+            });
+
+            const groupedByAgentCat: Record<string, Record<string, any[]>> = {};
+            allFailuresInScope.forEach(f => {
+                const agentId = f.audit.agentId;
+                const cat = (f.categoryLabel || f.criterion?.categoryName || 'General').trim();
+                if (!groupedByAgentCat[agentId]) groupedByAgentCat[agentId] = {};
+                if (!groupedByAgentCat[agentId][cat]) groupedByAgentCat[agentId][cat] = [];
+                groupedByAgentCat[agentId][cat].push(f);
+            });
+
+            for (const [agentId, cats] of Object.entries(groupedByAgentCat)) {
+                for (const [category, instances] of Object.entries(cats)) {
+                    const sortedInstances = [...instances].sort((a, b) =>
+                        new Date(b.audit.submittedAt).getTime() - new Date(a.audit.submittedAt).getTime()
+                    );
+
+                    // Only consider if the most recent infraction is within our primary filter range
+                    const latest = sortedInstances[0];
+                    const lastInfractionDate = new Date(latest.audit.submittedAt);
+                    if (lastInfractionDate < startDate) continue;
+
+                    const windowStart = subDays(lastInfractionDate, 30);
+                    const count = instances.filter(i => {
+                        const d = new Date(i.audit.submittedAt);
+                        return d >= windowStart && d <= lastInfractionDate;
+                    }).length;
+
+                    if (count >= 3) {
+                        let sanction = 'Written Warning';
+                        if (count >= 15) sanction = 'Termination';
+                        else if (count >= 12) sanction = 'Suspension (5 Days)';
+                        else if (count >= 9) sanction = 'Suspension (3 Days)';
+                        else if (count >= 6) sanction = 'Final Written Warning';
+
+                        activeProgressions.push({
+                            agentId,
+                            agentName: latest.audit.agent?.name || 'Unknown',
+                            teamName: latest.audit.agent?.employeeTeam || 'Direct Report',
+                            campaign: latest.audit.campaign?.name || latest.audit.agent?.employeeTeam || 'N/A',
+                            category,
+                            count,
+                            sanction,
+                            lastInfraction: lastInfractionDate
+                        });
+                    }
+                }
+            }
+            activeProgressions.sort((a, b) => b.count - a.count);
+        }
+
+        // Single Agent Result (for display on categories)
+        if (targetAgentId) {
+            const singleAgentId = targetAgentId;
+            const agentFailures = await this.prisma.auditScore.findMany({
+                where: {
+                    isFailed: true,
+                    audit: {
+                        agentId: singleAgentId,
+                        status: { in: [AuditStatus.SUBMITTED, AuditStatus.RELEASED, AuditStatus.DISPUTED, AuditStatus.REAPPEALED] }
+                    }
+                },
+                select: {
+                    categoryLabel: true,
+                    criterion: { select: { categoryName: true } },
+                    audit: { select: { submittedAt: true } }
+                }
+            });
+
+            const failuresByCat: Record<string, any[]> = {};
+            agentFailures.forEach(f => {
+                const cat = (f.categoryLabel || f.criterion?.categoryName || 'General').trim();
+                if (!failuresByCat[cat]) failuresByCat[cat] = [];
+                failuresByCat[cat].push(f);
+            });
+
+            policyProgress = Object.entries(failuresByCat).map(([category, instances]) => {
+                const sortedInstances = [...instances].sort((a, b) =>
+                    new Date(b.audit.submittedAt).getTime() - new Date(a.audit.submittedAt).getTime()
+                );
+                const lastInfractionDate = new Date(sortedInstances[0].audit.submittedAt);
+                const windowStart = subDays(lastInfractionDate, 30);
+                const count = instances.filter(i => {
+                    const d = new Date(i.audit.submittedAt);
+                    return d >= windowStart && d <= lastInfractionDate;
+                }).length;
+
+                let sanction = null;
+                if (count >= 15) sanction = 'For Termination';
+                else if (count >= 12) sanction = 'For Suspension (5 Days)';
+                else if (count >= 9) sanction = 'For Suspension (3 Days)';
+                else if (count >= 6) sanction = 'For Final Written Warning';
+                else if (count >= 3) sanction = 'For Written Warning';
+
+                return {
+                    category,
+                    count,
+                    lastInfraction: lastInfractionDate,
+                    sanction
+                };
+            }).sort((a, b) => b.count - a.count);
+        }
+
         return {
             summary: {
                 totalAudits,
@@ -257,7 +432,9 @@ export class DashboardService {
             },
             trend,
             failureHeatmap,
-            agentScores, // Add agent scores for flip card
+            agentScores,
+            policyProgress,
+            activeProgressions, // New list for management roster view
             failedAudits: await this.prisma.audit.findMany({
                 where: {
                     ...where,
@@ -296,33 +473,133 @@ export class DashboardService {
         };
     }
 
-    async getFilterOptions() {
-        // Fetch values for filter dropdowns
-        const [campaigns, supervisors, sdms, qas, userTeams, auditedAgents] = await Promise.all([
-            this.prisma.campaign.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } }),
-            this.prisma.user.findMany({ where: { supervisor: { not: null } }, select: { supervisor: true }, distinct: ['supervisor'] }),
-            this.prisma.user.findMany({ where: { sdm: { not: null } }, select: { sdm: true }, distinct: ['sdm'] }),
-            this.prisma.user.findMany({ where: { role: { in: [Role.QA, Role.QA_TL] } }, select: { id: true, name: true } }),
-            this.prisma.user.findMany({ select: { employeeTeam: true }, distinct: ['employeeTeam'] }),
-            this.prisma.user.findMany({
-                where: { auditsReceived: { some: {} } },
+    async getFilterOptions(user: any) {
+        try {
+            const role = String(user.role || '').toUpperCase();
+            const isStaff = role !== 'AGENT';
+            const isManagerRestricted = ['QA_TL', 'QATL', 'OPS_TL', 'OPSTL', 'OPS_MANAGER', 'OPSMANAGER', 'SDM', 'QA'].includes(role);
+
+            console.log(`[DASHBOARD] getFilterOptions | User ID: ${user.id} | role=${role} | restricted=${isManagerRestricted}`);
+
+            const visibilityFilter: any = {};
+            let assignedIds: string[] = [];
+            if (!isStaff) {
+                visibilityFilter.id = user.id;
+            } else if (isManagerRestricted) {
+                const assignments = await this.prisma.campaignQA.findMany({
+                    where: { userId: user.id, isActive: true },
+                    select: { campaignId: true }
+                });
+                assignedIds = assignments.map(a => a.campaignId);
+
+                if (assignedIds.length === 0) {
+                    return { campaigns: [], supervisors: [], sdms: [], agents: [], qas: [] };
+                }
+
+                visibilityFilter.auditsReceived = {
+                    some: { campaignId: { in: assignedIds } }
+                };
+            }
+
+            // Campaigns Filter
+            let campaignFilter: any = { type: 'USER', audits: { some: {} } };
+            if (isManagerRestricted) {
+                campaignFilter.qaAssignments = { some: { userId: user.id, isActive: true } };
+            } else if (!isStaff) {
+                campaignFilter.OR = [
+                    { qaAssignments: { some: { userId: user.id } } },
+                    { name: user.employeeTeam }
+                ];
+            }
+
+            const campaigns = await this.prisma.campaign.findMany({
+                where: campaignFilter,
                 select: { id: true, name: true },
                 orderBy: { name: 'asc' }
-            })
-        ]);
+            });
 
-        const campaignNames = new Set(campaigns.map(c => c.name.toLowerCase().trim()));
-        const implicitCampaigns = userTeams
-            .map(t => t.employeeTeam?.trim())
-            .filter(t => t && t !== 'Unassigned' && !campaignNames.has(t.toLowerCase()))
-            .map(t => ({ id: `TEAM:${t}`, name: t }));
+            // Supervisors
+            const supervisorsRaw = await this.prisma.user.findMany({
+                where: {
+                    supervisor: { not: null },
+                    ...((!isStaff || isManagerRestricted) ? visibilityFilter : {})
+                },
+                select: { supervisor: true },
+                distinct: ['supervisor']
+            });
 
+            // SDMs
+            const sdmsRaw = await this.prisma.user.findMany({
+                where: {
+                    sdm: { not: null },
+                    ...((!isStaff || isManagerRestricted) ? visibilityFilter : {})
+                },
+                select: { sdm: true },
+                distinct: ['sdm']
+            });
+
+            // Teams (Employee Teams)
+            const userTeams = await this.prisma.user.findMany({
+                where: {
+                    auditsReceived: isManagerRestricted
+                        ? visibilityFilter.auditsReceived // Use the restriction directly
+                        : { some: {} },
+                    ...(!isStaff ? { employeeTeam: user.employeeTeam } : {})
+                },
+                select: { employeeTeam: true },
+                distinct: ['employeeTeam']
+            });
+
+            // Agents
+            const auditedAgents = await this.prisma.user.findMany({
+                where: {
+                    role: 'AGENT' as any,
+                    auditsReceived: isManagerRestricted
+                        ? visibilityFilter.auditsReceived // Use the restriction directly
+                        : { some: {} },
+                    ...(!isStaff ? { id: user.id } : {})
+                },
+                select: { id: true, name: true },
+                orderBy: { name: 'asc' }
+            });
+
+            const qas = await this.prisma.user.findMany({
+                where: { role: { in: [Role.QA, Role.QA_TL] as any } },
+                select: { id: true, name: true }
+            });
+
+            const campaignNames = new Set(campaigns.map(c => c.name.toLowerCase().trim()));
+            const implicitCampaigns = userTeams
+                .map(t => t.employeeTeam?.trim())
+                .filter(t => t && t !== 'Unassigned' && !campaignNames.has(t.toLowerCase()))
+                .map(t => ({ id: `TEAM:${t}`, name: t }));
+
+            return {
+                campaigns: [...campaigns, ...implicitCampaigns].sort((a, b) => (a.name || '').localeCompare(b.name || '')),
+                supervisors: supervisorsRaw.map(s => s.supervisor).filter(Boolean).sort(),
+                sdms: sdmsRaw.map(s => s.sdm).filter(Boolean).sort(),
+                agents: auditedAgents,
+                qas
+            };
+        } catch (error) {
+            console.error('[DASHBOARD] ERROR:', error);
+            throw error;
+        }
+    }
+    private getEmptyStats() {
         return {
-            campaigns: [...campaigns, ...implicitCampaigns].sort((a, b) => (a.name || '').localeCompare(b.name || '')),
-            supervisors: supervisors.map(s => s.supervisor).filter(Boolean).sort(),
-            sdms: sdms.map(s => s.sdm).filter(Boolean).sort(),
-            agents: auditedAgents,
-            qas
+            summary: {
+                totalAudits: 0,
+                avgScore: 0,
+                complianceRate: 0,
+                disputeRate: 0
+            },
+            trend: [],
+            failureHeatmap: [],
+            agentScores: [],
+            policyProgress: [],
+            activeProgressions: [],
+            failedAudits: []
         };
     }
 }

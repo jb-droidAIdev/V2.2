@@ -30,6 +30,7 @@ export default function DashboardFilterBar({
     setIsFilterOpen,
     onApply
 }: DashboardFilterBarProps) {
+    console.log('[FILTERBAR] agents count:', filterOptions.agents?.length);
     const clearFilters = () => {
         const resetFilters = {
             startDate: '',

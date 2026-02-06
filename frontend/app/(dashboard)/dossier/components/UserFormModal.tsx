@@ -8,14 +8,15 @@ interface UserFormModalProps {
     onSubmit: (data: any) => Promise<void>;
     initialData?: any;
     campaigns?: string[];
+    viewMode?: 'admin' | 'users';
 }
 
-export default function UserFormModal({ isOpen, onClose, onSubmit, initialData, campaigns = [] }: UserFormModalProps) {
+export default function UserFormModal({ isOpen, onClose, onSubmit, initialData, campaigns = [], viewMode = 'users' }: UserFormModalProps) {
     const [isLoading, setIsLoading] = useState(false);
     const [formData, setFormData] = useState({
         name: '',
         email: '',
-        role: 'AGENT',
+        role: viewMode === 'admin' ? 'ADMIN' : 'AGENT',
         eid: '',
         systemId: '',
         employeeTeam: '',
@@ -45,7 +46,7 @@ export default function UserFormModal({ isOpen, onClose, onSubmit, initialData, 
             setFormData({
                 name: '',
                 email: '',
-                role: 'AGENT',
+                role: viewMode === 'admin' ? 'ADMIN' : 'AGENT',
                 eid: '',
                 systemId: '',
                 employeeTeam: '',
@@ -56,7 +57,7 @@ export default function UserFormModal({ isOpen, onClose, onSubmit, initialData, 
                 billable: true
             });
         }
-    }, [initialData, isOpen]);
+    }, [initialData, isOpen, viewMode]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -150,7 +151,10 @@ export default function UserFormModal({ isOpen, onClose, onSubmit, initialData, 
                                             <option value="AGENT">Agent</option>
                                             <option value="QA">QA Specialist</option>
                                             <option value="QA_TL">QA Team Lead</option>
+                                            <option value="QA_MANAGER">QA Manager</option>
                                             <option value="OPS_TL">Ops Team Lead</option>
+                                            <option value="OPS_MANAGER">Ops Manager</option>
+                                            <option value="SDM">SDM</option>
                                             <option value="ADMIN">Administrator</option>
                                         </select>
                                     </div>

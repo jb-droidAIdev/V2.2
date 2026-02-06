@@ -90,16 +90,32 @@ export class DisputeService {
                 await this.applyCorrection(tx, item.dispute.auditId, item.criterionId);
             }
 
-            // Check if all items in this dispute were reviewed
-            const allItems = await tx.disputeItem.findMany({ where: { disputeId } });
+            // Refetch all items to get the latest verdicts (including the one we just set)
+            const allItems = await tx.disputeItem.findMany({
+                where: { disputeId },
+                include: { dispute: true }
+            });
             const allReviewed = allItems.every(i => !!i.qaVerdict);
 
             if (allReviewed) {
                 const anyRejected = allItems.some(i => i.qaVerdict === DisputeVerdict.REJECTED);
+                const allAccepted = allItems.every(i => i.qaVerdict === DisputeVerdict.ACCEPTED);
+
                 await tx.dispute.update({
                     where: { id: disputeId },
                     data: { status: anyRejected ? DisputeStatus.QA_REJECTED : DisputeStatus.FINALIZED }
                 });
+
+                // Update Audit Status based on QA verdict
+                const auditId = allItems[0].dispute.auditId;
+                if (allAccepted) {
+                    // QA Reviewed (Accepted) - Audit moves to "Resolved" (RELEASED)
+                    await tx.audit.update({
+                        where: { id: auditId },
+                        data: { status: AuditStatus.RELEASED }
+                    });
+                }
+                // If any rejected, audit stays DISPUTED until re-appeal or deadline
             }
 
             return updatedItem;
@@ -171,8 +187,11 @@ export class DisputeService {
                 await this.applyCorrection(tx, item.dispute.auditId, item.criterionId);
             }
 
-            // Check overall closure
-            const allItems = await tx.disputeItem.findMany({ where: { disputeId } });
+            // Refetch all items to get the latest verdicts (including the one we just set)
+            const allItems = await tx.disputeItem.findMany({
+                where: { disputeId },
+                include: { dispute: true }
+            });
             const allDone = allItems.every(i => (i.qaVerdict === DisputeVerdict.ACCEPTED) || !!i.finalVerdict);
 
             if (allDone) {
@@ -180,6 +199,28 @@ export class DisputeService {
                     where: { id: disputeId },
                     data: { status: DisputeStatus.FINALIZED }
                 });
+
+                // Update Audit Status based on final verdict
+                const auditId = allItems[0].dispute.auditId;
+                const anyFinalAccepted = allItems.some(i => i.finalVerdict === DisputeVerdict.ACCEPTED);
+                const allFinalRejected = allItems
+                    .filter(i => i.qaVerdict === DisputeVerdict.REJECTED)
+                    .every(i => i.finalVerdict === DisputeVerdict.REJECTED);
+
+                if (anyFinalAccepted || allItems.every(i => i.qaVerdict === DisputeVerdict.ACCEPTED)) {
+                    // Finalized (Accepted) - Audit marked "Resolved" (RELEASED)
+                    await tx.audit.update({
+                        where: { id: auditId },
+                        data: { status: AuditStatus.RELEASED }
+                    });
+                } else if (allFinalRejected) {
+                    // Finalized (Rejected) - Audit marked "Not in Favor" (stays REAPPEALED)
+                    // Audit status remains REAPPEALED to indicate coaching required
+                    await tx.audit.update({
+                        where: { id: auditId },
+                        data: { status: AuditStatus.REAPPEALED }
+                    });
+                }
             }
 
             return updatedItem;

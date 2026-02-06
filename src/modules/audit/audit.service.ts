@@ -73,18 +73,23 @@ export class AuditService {
 
     async findAll(user: any) {
         let where: any = {};
+        const role = String(user.role || '').toUpperCase();
+        const isStaff = role !== 'AGENT';
 
-        // RBAC: Data Visibility Logic
-        if (user.role === Role.AGENT) {
-            // Agents only see their OWN audits which are RELEASED
+        if (role === 'AGENT') {
             where.agentId = user.id;
             where.status = { in: [AuditStatus.RELEASED, (AuditStatus as any).DISPUTED, (AuditStatus as any).REAPPEALED] };
-        } else if ([Role.QA_TL, Role.OPS_TL].includes(user.role)) {
-            // Team Leaders see audits for their entire team
-            // Note: We use employeeTeam from the agent profile associated with the audit
-            where.agent = {
-                employeeTeam: user.employeeTeam
-            };
+        } else if (['QA_TL', 'QATL', 'OPS_TL', 'OPSTL', 'OPS_MANAGER', 'OPSMANAGER', 'SDM', 'QA'].includes(role)) {
+            // Managers & QAs only see their assigned campaigns
+            const assignments = await this.prisma.campaignQA.findMany({
+                where: { userId: user.id, isActive: true },
+                select: { campaignId: true }
+            });
+            const assignedIds = assignments.map(a => a.campaignId);
+            where.campaignId = { in: assignedIds };
+        } else if (!isStaff) {
+            // Further restricted roles (if any) only see their own team
+            where.agent = { ...where.agent, employeeTeam: user.employeeTeam };
         }
         // ADMIN and QA see everything (where stays empty)
 
@@ -162,10 +167,29 @@ export class AuditService {
         }
 
         // 3. RBAC: Data Visibility Logic
-        if (user.role === Role.AGENT) {
+        const role = String(user.role || '').toUpperCase();
+        const isStaff = role !== 'AGENT';
+        const restrictedRoles = ['QA_TL', 'QATL', 'OPS_TL', 'OPSTL', 'OPS_MANAGER', 'OPSMANAGER', 'SDM', 'QA'];
+
+        if (role === 'AGENT') {
             where.agentId = user.id;
             where.status = { in: [AuditStatus.RELEASED, (AuditStatus as any).DISPUTED, (AuditStatus as any).REAPPEALED] };
-        } else if ([Role.QA_TL, Role.OPS_TL].includes(user.role)) {
+        } else if (restrictedRoles.includes(role)) {
+            const userAssignments = await this.prisma.campaignQA.findMany({
+                where: { userId: user.id, isActive: true },
+                select: { campaignId: true }
+            });
+            const assignedIds = userAssignments.map(a => a.campaignId);
+
+            if (where.campaignId && where.campaignId.in) {
+                const requested = where.campaignId.in;
+                const intersected = requested.filter((id: string) => assignedIds.includes(id));
+                if (intersected.length === 0) return [];
+                where.campaignId = { in: intersected };
+            } else {
+                where.campaignId = { in: assignedIds };
+            }
+        } else if (!isStaff) {
             where.agent = {
                 ...where.agent,
                 employeeTeam: user.employeeTeam
@@ -454,7 +478,9 @@ export class AuditService {
                     include: { criteria: true }
                 },
                 fieldValues: true,
-                scores: true,
+                scores: {
+                    include: { criterion: true }
+                },
                 agent: {
                     select: { name: true, eid: true, employeeTeam: true }
                 },
@@ -469,8 +495,41 @@ export class AuditService {
                 }
             }
         });
+
         if (!audit) throw new NotFoundException('Audit not found');
-        return audit;
+
+        // ENRICHMENT: Calculate ZTP Milestones for the preview
+        const enrichedScores = await Promise.all(audit.scores.map(async (score) => {
+            if (!score.isFailed || !audit.submittedAt) return { ...score, reachedMilestone: null };
+
+            const category = (score.categoryLabel || score.criterion?.categoryName || 'General').trim();
+            const auditDate = new Date(audit.submittedAt);
+            const windowStart = new Date(auditDate);
+            windowStart.setDate(windowStart.getDate() - 30);
+
+            // Count infractions for this agent/cat in the 30d window leading to THIS audit
+            const count = await this.prisma.auditScore.count({
+                where: {
+                    isFailed: true,
+                    categoryLabel: category,
+                    audit: {
+                        agentId: audit.agentId,
+                        submittedAt: {
+                            gte: windowStart,
+                            lte: auditDate
+                        }
+                    }
+                }
+            });
+
+            // If this specific audit caused hitting a milestone
+            const milestones = [3, 6, 9, 12, 15];
+            const reachedMilestone = milestones.includes(count) ? count : null;
+
+            return { ...score, reachedMilestone };
+        }));
+
+        return { ...audit, scores: enrichedScores };
     }
 
     async autosave(id: string, auditorId: string, data: { fieldValues?: Record<string, string>; scores?: { criterionId: string; score: number; comment?: string; isFailed?: boolean }[] }) {

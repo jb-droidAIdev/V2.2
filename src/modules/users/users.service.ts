@@ -7,9 +7,16 @@ import * as bcrypt from 'bcrypt';
 export class UsersService {
     constructor(private prisma: PrismaService) { }
 
-    async findOne(email: string): Promise<User | null> {
-        return this.prisma.user.findUnique({
-            where: { email },
+    async findOne(identifier: string): Promise<User | null> {
+        if (!identifier) return null;
+
+        return this.prisma.user.findFirst({
+            where: {
+                OR: [
+                    { email: { equals: identifier.toLowerCase().trim(), mode: 'insensitive' } },
+                    { eid: identifier.trim() }
+                ]
+            },
         });
     }
 
@@ -19,9 +26,26 @@ export class UsersService {
         });
     }
 
-    async findAll() {
+    async findAll(user?: any) {
+        let where: any = { isActive: true };
+
+        // RBAC: TLs see their own team + any campaign they are assigned to
+        if (user && [Role.QA_TL, Role.QA_MANAGER, Role.OPS_TL, Role.OPS_MANAGER, Role.SDM].includes(user.role)) {
+            const assignments = await this.prisma.campaignQA.findMany({
+                where: { userId: user.id },
+                include: { campaign: true }
+            });
+            const campaignNames = assignments.map(a => a.campaign.name);
+
+            where.OR = [
+                { employeeTeam: user.employeeTeam },
+                { employeeTeam: { in: campaignNames } },
+                { role: { in: [Role.QA, Role.QA_TL] } } // Allow seeing the QA staff folder in Dossier
+            ];
+        }
+
         return this.prisma.user.findMany({
-            where: { isActive: true },
+            where,
             select: {
                 id: true,
                 email: true,
@@ -65,15 +89,25 @@ export class UsersService {
         });
     }
 
-    async create(data: { email: string; name: string; role: Role; password?: string }) {
-        const hashedPassword = data.password ? await bcrypt.hash(data.password, 10) : '';
+    async create(data: any) {
+        const { password, ...userData } = data;
+        const hashedPassword = await bcrypt.hash(password || 'Standard123!', 10);
+
+        // Sanitize string fields
+        const sanitizedData = Object.entries(userData).reduce((acc, [key, value]) => {
+            if (typeof value === 'string') {
+                acc[key] = value.trim();
+            } else {
+                acc[key] = value;
+            }
+            return acc;
+        }, {} as any);
 
         return this.prisma.user.create({
             data: {
-                email: data.email,
-                name: data.name,
-                role: data.role,
+                ...sanitizedData,
                 password: hashedPassword,
+                mustChangePassword: true
             }
         });
     }
@@ -93,33 +127,47 @@ export class UsersService {
                 const role = u.role as Role || Role.AGENT;
                 const billable = u.billable === true || u.billable === 'true' || u.billable === 'Yes';
 
-                // Identify by EID (Primary) or Email
-                const where = u.eid ? { eid: String(u.eid) } : { email: u.email };
+                // Robust lookup: Search by EID or Email (case-insensitive)
+                const existingUser = await this.findOne(u.eid || u.email);
 
-                await this.prisma.user.upsert({
-                    where,
-                    update: {
-                        name: u.name,
-                        role: role,
-                        billable: billable,
-                        employeeTeam: u.employeeTeam,
-                        projectCode: u.projectCode,
-                        supervisor: u.supervisor,
-                        manager: u.manager,
-                        sdm: u.sdm,
-                        systemId: u.systemId,
-                        isActive: true, // Mark as active if they are in the latest file
-                        ...(u.eid && u.email ? { email: u.email } : {})
-                    },
-                    create: {
-                        ...u,
-                        password: u.password ? await bcrypt.hash(u.password, 10) : await bcrypt.hash('Standard123!', 10),
-                        role,
-                        billable,
-                        isActive: true,
-                        email: u.email || (u.eid ? `${u.eid}@flatworld.ph` : `user-${Math.random().toString(36).substring(7)}@placeholder.com`)
-                    }
-                });
+                const userData = {
+                    name: u.name,
+                    role: role,
+                    billable: billable,
+                    employeeTeam: u.employeeTeam,
+                    projectCode: u.projectCode,
+                    supervisor: u.supervisor,
+                    manager: u.manager,
+                    sdm: u.sdm,
+                    systemId: String(u.systemId || ''),
+                    isActive: true,
+                };
+
+                if (existingUser) {
+                    // UPDATE EXISTING: Never touch password or mustChangePassword
+                    await this.prisma.user.update({
+                        where: { id: existingUser.id },
+                        data: {
+                            ...userData,
+                            // Ensure email stays consistent with file if provided
+                            ...(u.email ? { email: u.email.toLowerCase().trim() } : {}),
+                            // Ensure EID stays consistent with file if provided
+                            ...(u.eid ? { eid: String(u.eid).trim() } : {})
+                        }
+                    });
+                } else {
+                    // CREATE NEW
+                    const defaultPassword = await bcrypt.hash('Standard123!', 10);
+                    await this.prisma.user.create({
+                        data: {
+                            ...userData,
+                            email: u.email ? u.email.toLowerCase().trim() : (u.eid ? `${u.eid.trim()}@flatworld.ph` : `user-${Math.random().toString(36).substring(7)}@placeholder.com`),
+                            eid: u.eid ? String(u.eid).trim() : null,
+                            password: defaultPassword,
+                            mustChangePassword: true
+                        }
+                    });
+                }
                 processedCount++;
             }));
         }

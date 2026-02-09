@@ -4,8 +4,8 @@ export declare class AuditController {
     constructor(auditService: AuditService);
     getActive(req: any): Promise<{
         agent: {
-            id: string;
             name: string;
+            id: string;
             eid: string;
             employeeTeam: string;
             manager: string;
@@ -15,15 +15,15 @@ export declare class AuditController {
         formVersion: {
             criteria: {
                 id: string;
-                formVersionId: string;
                 isActive: boolean;
+                description: string | null;
+                formVersionId: string;
+                orderIndex: number;
                 categoryId: string;
                 categoryName: string;
                 title: string;
-                description: string | null;
                 weight: number;
                 isCritical: boolean;
-                orderIndex: number;
             }[];
         } & {
             id: string;
@@ -39,16 +39,16 @@ export declare class AuditController {
         };
         fieldValues: {
             id: string;
+            value: string;
             auditId: string;
             fieldName: string;
-            value: string;
         }[];
         scores: {
             id: string;
             score: number;
             auditId: string;
-            criterionId: string;
             comment: string | null;
+            criterionId: string;
             isFailed: boolean;
             categoryLabel: string | null;
             criterionTitle: string | null;
@@ -72,10 +72,6 @@ export declare class AuditController {
     }>;
     findAll(req: any): Promise<any[]>;
     getFailures(req: any, query: any): Promise<({
-        agent: {
-            name: string;
-            employeeTeam: string;
-        };
         campaign: {
             name: string;
         };
@@ -89,6 +85,10 @@ export declare class AuditController {
             ticketId: string;
             runId: string;
             assignedQaId: string | null;
+        };
+        agent: {
+            name: string;
+            employeeTeam: string;
         };
         scores: {
             comment: string;
@@ -133,8 +133,8 @@ export declare class AuditController {
     }>;
     createManual(body: any, req: any): Promise<{
         agent: {
-            id: string;
             name: string;
+            id: string;
             eid: string;
             employeeTeam: string;
             manager: string;
@@ -144,15 +144,15 @@ export declare class AuditController {
         formVersion: {
             criteria: {
                 id: string;
-                formVersionId: string;
                 isActive: boolean;
+                description: string | null;
+                formVersionId: string;
+                orderIndex: number;
                 categoryId: string;
                 categoryName: string;
                 title: string;
-                description: string | null;
                 weight: number;
                 isCritical: boolean;
-                orderIndex: number;
             }[];
         } & {
             id: string;
@@ -188,61 +188,27 @@ export declare class AuditController {
             reachedMilestone: number;
             criterion: {
                 id: string;
-                formVersionId: string;
                 isActive: boolean;
+                description: string | null;
+                formVersionId: string;
+                orderIndex: number;
                 categoryId: string;
                 categoryName: string;
                 title: string;
-                description: string | null;
                 weight: number;
                 isCritical: boolean;
-                orderIndex: number;
             };
             id: string;
             score: number;
             auditId: string;
-            criterionId: string;
             comment: string | null;
+            criterionId: string;
             isFailed: boolean;
             categoryLabel: string | null;
             criterionTitle: string | null;
         }[];
-        agent: {
-            name: string;
-            eid: string;
-            employeeTeam: string;
-        };
-        auditor: {
-            name: string;
-            eid: string;
-        };
         campaign: {
             name: string;
-        };
-        formVersion: {
-            criteria: {
-                id: string;
-                formVersionId: string;
-                isActive: boolean;
-                categoryId: string;
-                categoryName: string;
-                title: string;
-                description: string | null;
-                weight: number;
-                isCritical: boolean;
-                orderIndex: number;
-            }[];
-        } & {
-            id: string;
-            createdAt: Date;
-            isActive: boolean;
-            formId: string;
-            versionNumber: number;
-            isDraft: boolean;
-            categories: import("@prisma/client/runtime/library").JsonValue;
-            publishedAt: Date | null;
-            creatorId: string | null;
-            changeLog: string | null;
         };
         sampledTicket: {
             ticket: {
@@ -262,11 +228,45 @@ export declare class AuditController {
             runId: string;
             assignedQaId: string | null;
         };
+        agent: {
+            name: string;
+            eid: string;
+            employeeTeam: string;
+        };
+        auditor: {
+            name: string;
+            eid: string;
+        };
+        formVersion: {
+            criteria: {
+                id: string;
+                isActive: boolean;
+                description: string | null;
+                formVersionId: string;
+                orderIndex: number;
+                categoryId: string;
+                categoryName: string;
+                title: string;
+                weight: number;
+                isCritical: boolean;
+            }[];
+        } & {
+            id: string;
+            createdAt: Date;
+            isActive: boolean;
+            formId: string;
+            versionNumber: number;
+            isDraft: boolean;
+            categories: import("@prisma/client/runtime/library").JsonValue;
+            publishedAt: Date | null;
+            creatorId: string | null;
+            changeLog: string | null;
+        };
         fieldValues: {
             id: string;
+            value: string;
             auditId: string;
             fieldName: string;
-            value: string;
         }[];
         id: string;
         campaignId: string;

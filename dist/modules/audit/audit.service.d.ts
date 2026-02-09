@@ -4,8 +4,8 @@ export declare class AuditService {
     constructor(prisma: PrismaService);
     getActiveAudit(auditorId: string): Promise<{
         agent: {
-            name: string;
             id: string;
+            name: string;
             eid: string;
             employeeTeam: string;
             manager: string;
@@ -15,15 +15,15 @@ export declare class AuditService {
         formVersion: {
             criteria: {
                 id: string;
-                isActive: boolean;
-                description: string | null;
                 formVersionId: string;
-                orderIndex: number;
+                isActive: boolean;
                 categoryId: string;
                 categoryName: string;
                 title: string;
+                description: string | null;
                 weight: number;
                 isCritical: boolean;
+                orderIndex: number;
             }[];
         } & {
             id: string;
@@ -39,16 +39,16 @@ export declare class AuditService {
         };
         fieldValues: {
             id: string;
-            value: string;
             auditId: string;
             fieldName: string;
+            value: string;
         }[];
         scores: {
             id: string;
             score: number;
             auditId: string;
-            comment: string | null;
             criterionId: string;
+            comment: string | null;
             isFailed: boolean;
             categoryLabel: string | null;
             criterionTitle: string | null;
@@ -76,88 +76,25 @@ export declare class AuditService {
         totalEarned: number;
         totalPossible: number;
     };
-    findAll(user: any): Promise<({
-        campaign: {
-            name: string;
-        };
-        sampledTicket: {
-            ticket: {
-                id: string;
-                campaignId: string;
-                agentId: string;
-                batchId: string;
-                externalTicketId: string;
-                interactionDate: Date;
-                channel: string | null;
-                metadata: import("@prisma/client/runtime/library").JsonValue | null;
-            };
-        } & {
-            id: string;
-            status: string;
-            ticketId: string;
-            runId: string;
-            assignedQaId: string | null;
-        };
-        agent: {
-            name: string;
-            email: string;
-            eid: string;
-        };
-        auditor: {
-            name: string;
-            eid: string;
-        };
-        formVersion: {
-            form: {
-                name: string;
-            };
-        } & {
-            id: string;
-            createdAt: Date;
-            isActive: boolean;
-            formId: string;
-            versionNumber: number;
-            isDraft: boolean;
-            categories: import("@prisma/client/runtime/library").JsonValue;
-            publishedAt: Date | null;
-            creatorId: string | null;
-            changeLog: string | null;
-        };
-    } & {
-        id: string;
-        campaignId: string;
-        sampledTicketId: string | null;
-        formVersionId: string;
-        auditorId: string;
-        agentId: string;
-        status: import(".prisma/client").$Enums.AuditStatus;
-        score: number | null;
-        isAutoFailed: boolean;
-        startedAt: Date;
-        submittedAt: Date | null;
-        releasedAt: Date | null;
-        agentAckDeadline: Date | null;
-        lastActionAt: Date;
-        ticketReference: string | null;
-    })[]>;
+    findAll(user: any): Promise<any[]>;
     getFailures(user: any, filters?: any): Promise<({
-        campaign: {
-            name: string;
-        };
-        sampledTicket: {
-            ticket: {
-                externalTicketId: string;
-            };
-        } & {
-            id: string;
-            status: string;
-            ticketId: string;
-            runId: string;
-            assignedQaId: string | null;
-        };
         agent: {
             name: string;
             employeeTeam: string;
+        };
+        campaign: {
+            name: string;
+        };
+        sampledTicket: {
+            ticket: {
+                externalTicketId: string;
+            };
+        } & {
+            id: string;
+            status: string;
+            ticketId: string;
+            runId: string;
+            assignedQaId: string | null;
         };
         scores: {
             comment: string;
@@ -207,8 +144,8 @@ export declare class AuditService {
         ticketReference?: string;
     }): Promise<{
         agent: {
-            name: string;
             id: string;
+            name: string;
             eid: string;
             employeeTeam: string;
             manager: string;
@@ -218,15 +155,15 @@ export declare class AuditService {
         formVersion: {
             criteria: {
                 id: string;
-                isActive: boolean;
-                description: string | null;
                 formVersionId: string;
-                orderIndex: number;
+                isActive: boolean;
                 categoryId: string;
                 categoryName: string;
                 title: string;
+                description: string | null;
                 weight: number;
                 isCritical: boolean;
+                orderIndex: number;
             }[];
         } & {
             id: string;
@@ -257,32 +194,66 @@ export declare class AuditService {
         lastActionAt: Date;
         ticketReference: string | null;
     }>;
-    findOne(id: string): Promise<{
+    findOne(id: string, userId?: string): Promise<{
         scores: {
             reachedMilestone: number;
             criterion: {
                 id: string;
-                isActive: boolean;
-                description: string | null;
                 formVersionId: string;
-                orderIndex: number;
+                isActive: boolean;
                 categoryId: string;
                 categoryName: string;
                 title: string;
+                description: string | null;
                 weight: number;
                 isCritical: boolean;
+                orderIndex: number;
             };
             id: string;
             score: number;
             auditId: string;
-            comment: string | null;
             criterionId: string;
+            comment: string | null;
             isFailed: boolean;
             categoryLabel: string | null;
             criterionTitle: string | null;
         }[];
+        agent: {
+            name: string;
+            eid: string;
+            employeeTeam: string;
+        };
+        auditor: {
+            name: string;
+            eid: string;
+        };
         campaign: {
             name: string;
+        };
+        formVersion: {
+            criteria: {
+                id: string;
+                formVersionId: string;
+                isActive: boolean;
+                categoryId: string;
+                categoryName: string;
+                title: string;
+                description: string | null;
+                weight: number;
+                isCritical: boolean;
+                orderIndex: number;
+            }[];
+        } & {
+            id: string;
+            createdAt: Date;
+            isActive: boolean;
+            formId: string;
+            versionNumber: number;
+            isDraft: boolean;
+            categories: import("@prisma/client/runtime/library").JsonValue;
+            publishedAt: Date | null;
+            creatorId: string | null;
+            changeLog: string | null;
         };
         sampledTicket: {
             ticket: {
@@ -302,45 +273,11 @@ export declare class AuditService {
             runId: string;
             assignedQaId: string | null;
         };
-        agent: {
-            name: string;
-            eid: string;
-            employeeTeam: string;
-        };
-        auditor: {
-            name: string;
-            eid: string;
-        };
-        formVersion: {
-            criteria: {
-                id: string;
-                isActive: boolean;
-                description: string | null;
-                formVersionId: string;
-                orderIndex: number;
-                categoryId: string;
-                categoryName: string;
-                title: string;
-                weight: number;
-                isCritical: boolean;
-            }[];
-        } & {
-            id: string;
-            createdAt: Date;
-            isActive: boolean;
-            formId: string;
-            versionNumber: number;
-            isDraft: boolean;
-            categories: import("@prisma/client/runtime/library").JsonValue;
-            publishedAt: Date | null;
-            creatorId: string | null;
-            changeLog: string | null;
-        };
         fieldValues: {
             id: string;
-            value: string;
             auditId: string;
             fieldName: string;
+            value: string;
         }[];
         id: string;
         campaignId: string;

@@ -15,8 +15,8 @@ export declare class UsersController {
             permissionId: string;
         })[];
     } & {
-        id: string;
         name: string;
+        id: string;
         description: string | null;
         isSystem: boolean;
     })[]>;
@@ -41,16 +41,16 @@ export declare class UsersController {
             permissionId: string;
         })[];
     } & {
-        id: string;
         name: string;
+        id: string;
         description: string | null;
         isSystem: boolean;
     })[]>;
     findAll(req: any): Promise<{
-        id: string;
         name: string;
-        role: import(".prisma/client").$Enums.Role;
+        id: string;
         email: string;
+        role: import(".prisma/client").$Enums.Role;
         createdAt: Date;
         billable: boolean;
         eid: string;
@@ -63,11 +63,10 @@ export declare class UsersController {
         isActive: boolean;
     }[]>;
     create(data: any): Promise<{
-        id: string;
         name: string;
-        roleId: string | null;
-        role: import(".prisma/client").$Enums.Role;
+        id: string;
         email: string;
+        role: import(".prisma/client").$Enums.Role;
         createdAt: Date;
         updatedAt: Date;
         password: string;
@@ -84,11 +83,12 @@ export declare class UsersController {
         lastLoginAt: Date | null;
         lockoutUntil: Date | null;
         mustChangePassword: boolean;
+        roleId: string | null;
     }>;
     getUniqueTeams(): Promise<string[]>;
     findByTeam(teamName: string, req: any): Promise<{
-        id: string;
         name: string;
+        id: string;
         email: string;
         eid: string;
         employeeTeam: string;
@@ -104,11 +104,10 @@ export declare class UsersController {
         newName: string;
     }): Promise<import(".prisma/client").Prisma.BatchPayload>;
     update(id: string, data: any): Promise<{
-        id: string;
         name: string;
-        roleId: string | null;
-        role: import(".prisma/client").$Enums.Role;
+        id: string;
         email: string;
+        role: import(".prisma/client").$Enums.Role;
         createdAt: Date;
         updatedAt: Date;
         password: string;
@@ -125,10 +124,11 @@ export declare class UsersController {
         lastLoginAt: Date | null;
         lockoutUntil: Date | null;
         mustChangePassword: boolean;
+        roleId: string | null;
     }>;
     getCampaigns(id: string): Promise<{
-        id: string;
         name: string;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
         isActive: boolean;
@@ -140,11 +140,10 @@ export declare class UsersController {
         campaignIds: string[];
     }): Promise<void>;
     remove(id: string): Promise<{
-        id: string;
         name: string;
-        roleId: string | null;
-        role: import(".prisma/client").$Enums.Role;
+        id: string;
         email: string;
+        role: import(".prisma/client").$Enums.Role;
         createdAt: Date;
         updatedAt: Date;
         password: string;
@@ -161,5 +160,6 @@ export declare class UsersController {
         lastLoginAt: Date | null;
         lockoutUntil: Date | null;
         mustChangePassword: boolean;
+        roleId: string | null;
     }>;
 }

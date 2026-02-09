@@ -43,7 +43,10 @@ let DisputeService = class DisputeService {
         return this.prisma.$transaction(async (tx) => {
             await tx.audit.update({
                 where: { id: auditId },
-                data: { status: client_1.AuditStatus.DISPUTED }
+                data: {
+                    status: client_1.AuditStatus.DISPUTED,
+                    lastActionAt: new Date()
+                }
             });
             return tx.dispute.create({
                 data: {
@@ -97,11 +100,18 @@ let DisputeService = class DisputeService {
                     where: { id: disputeId },
                     data: { status: anyRejected ? client_1.DisputeStatus.QA_REJECTED : client_1.DisputeStatus.FINALIZED }
                 });
+                await tx.audit.update({
+                    where: { id: allItems[0].dispute.auditId },
+                    data: { lastActionAt: new Date() }
+                });
                 const auditId = allItems[0].dispute.auditId;
                 if (allAccepted) {
                     await tx.audit.update({
                         where: { id: auditId },
-                        data: { status: client_1.AuditStatus.RELEASED }
+                        data: {
+                            status: client_1.AuditStatus.RELEASED,
+                            lastActionAt: new Date()
+                        }
                     });
                 }
             }
@@ -126,7 +136,10 @@ let DisputeService = class DisputeService {
         return this.prisma.$transaction(async (tx) => {
             await tx.audit.update({
                 where: { id: dispute.auditId },
-                data: { status: client_1.AuditStatus.REAPPEALED }
+                data: {
+                    status: client_1.AuditStatus.REAPPEALED,
+                    lastActionAt: new Date()
+                }
             });
             await tx.dispute.update({
                 where: { id: disputeId },
@@ -189,7 +202,10 @@ let DisputeService = class DisputeService {
                 else if (allFinalRejected) {
                     await tx.audit.update({
                         where: { id: auditId },
-                        data: { status: client_1.AuditStatus.REAPPEALED }
+                        data: {
+                            status: client_1.AuditStatus.REAPPEALED,
+                            lastActionAt: new Date()
+                        }
                     });
                 }
             }

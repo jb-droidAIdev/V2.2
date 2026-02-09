@@ -91,7 +91,7 @@ let AuditService = class AuditService {
         else if (!isStaff) {
             where.agent = { ...where.agent, employeeTeam: user.employeeTeam };
         }
-        return this.prisma.audit.findMany({
+        const audits = await this.prisma.audit.findMany({
             where,
             include: {
                 agent: {
@@ -112,9 +112,17 @@ let AuditService = class AuditService {
                 },
                 sampledTicket: {
                     include: { ticket: true }
+                },
+                userViews: {
+                    where: { userId: user.id }
                 }
             },
             orderBy: { lastActionAt: 'desc' }
+        });
+        return audits.map(audit => {
+            const lastView = audit.userViews?.[0];
+            const isUnread = !lastView || new Date(lastView.viewedAt) < new Date(audit.lastActionAt);
+            return { ...audit, isUnread };
         });
     }
     async getFailures(user, filters = {}) {
@@ -412,7 +420,14 @@ let AuditService = class AuditService {
             }
         });
     }
-    async findOne(id) {
+    async findOne(id, userId) {
+        if (userId) {
+            await this.prisma.auditUserView.upsert({
+                where: { auditId_userId: { auditId: id, userId } },
+                create: { auditId: id, userId },
+                update: { viewedAt: new Date() }
+            });
+        }
         const audit = await this.prisma.audit.findUnique({
             where: { id },
             include: {
@@ -574,7 +589,8 @@ let AuditService = class AuditService {
                 releasedAt: now,
                 agentAckDeadline: deadline,
                 score: percent,
-                isAutoFailed
+                isAutoFailed,
+                lastActionAt: now
             }
         });
     }

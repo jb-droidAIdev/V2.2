@@ -41,8 +41,8 @@ let AuditController = class AuditController {
             auditorId: req.user.id
         });
     }
-    findOne(id) {
-        return this.auditService.findOne(id);
+    findOne(id, req) {
+        return this.auditService.findOne(id, req.user.id);
     }
     autosave(id, body, req) {
         return this.auditService.autosave(id, req.user.id, body);
@@ -103,8 +103,9 @@ __decorate([
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt')),
     (0, common_1.Get)(':id'),
     __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Request)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", void 0)
 ], AuditController.prototype, "findOne", null);
 __decorate([

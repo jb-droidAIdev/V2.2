@@ -12,9 +12,9 @@ export declare class DisputeService {
         }[];
     }): Promise<{
         id: string;
+        status: import(".prisma/client").$Enums.DisputeStatus;
         createdAt: Date;
         updatedAt: Date;
-        status: import(".prisma/client").$Enums.DisputeStatus;
         auditId: string;
         raisedById: string;
     }>;
@@ -66,6 +66,10 @@ export declare class DisputeService {
     private applyCorrection;
     findAll(): Promise<({
         audit: {
+            agent: {
+                name: string;
+                eid: string;
+            };
             campaign: {
                 name: string;
             };
@@ -86,10 +90,6 @@ export declare class DisputeService {
                 ticketId: string;
                 runId: string;
                 assignedQaId: string | null;
-            };
-            agent: {
-                name: string;
-                eid: string;
             };
         } & {
             id: string;
@@ -114,15 +114,15 @@ export declare class DisputeService {
         items: ({
             criterion: {
                 id: string;
-                isActive: boolean;
-                description: string | null;
                 formVersionId: string;
-                orderIndex: number;
+                isActive: boolean;
                 categoryId: string;
                 categoryName: string;
                 title: string;
+                description: string | null;
                 weight: number;
                 isCritical: boolean;
+                orderIndex: number;
             };
         } & {
             id: string;
@@ -143,9 +143,9 @@ export declare class DisputeService {
         })[];
     } & {
         id: string;
+        status: import(".prisma/client").$Enums.DisputeStatus;
         createdAt: Date;
         updatedAt: Date;
-        status: import(".prisma/client").$Enums.DisputeStatus;
         auditId: string;
         raisedById: string;
     })[]>;
@@ -156,15 +156,15 @@ export declare class DisputeService {
         items: ({
             criterion: {
                 id: string;
-                isActive: boolean;
-                description: string | null;
                 formVersionId: string;
-                orderIndex: number;
+                isActive: boolean;
                 categoryId: string;
                 categoryName: string;
                 title: string;
+                description: string | null;
                 weight: number;
                 isCritical: boolean;
+                orderIndex: number;
             };
         } & {
             id: string;
@@ -185,9 +185,9 @@ export declare class DisputeService {
         })[];
     } & {
         id: string;
+        status: import(".prisma/client").$Enums.DisputeStatus;
         createdAt: Date;
         updatedAt: Date;
-        status: import(".prisma/client").$Enums.DisputeStatus;
         auditId: string;
         raisedById: string;
     }>;

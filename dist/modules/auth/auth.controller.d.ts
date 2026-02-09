@@ -10,9 +10,9 @@ export declare class AuthController {
     }>;
     getProfile(req: any): any;
     updatePassword(req: any, body: any): Promise<{
+        name: string;
         id: string;
         email: string;
-        name: string;
         role: import(".prisma/client").$Enums.Role;
         createdAt: Date;
         updatedAt: Date;

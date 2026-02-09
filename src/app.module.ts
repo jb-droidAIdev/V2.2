@@ -13,6 +13,7 @@ import { DisputeModule } from './modules/dispute/dispute.module';
 import { CalibrationModule } from './modules/calibration/calibration.module';
 import { RubricRevisionModule } from './modules/rubric-revision/rubric-revision.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { MailModule } from './modules/mail/mail.module';
 
 import { GlobalModule } from './global.module';
 import { UsersModule } from './modules/users/users.module';
@@ -20,7 +21,7 @@ import { UsersModule } from './modules/users/users.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 
 @Module({
-  imports: [GlobalModule, AuthModule, CampaignsModule, FormsModule, TicketIngestModule, SamplingModule, AuditModule, SlaEngineModule, ReleaseModule, DisputeModule, CalibrationModule, RubricRevisionModule, NotificationsModule, UsersModule, DashboardModule],
+  imports: [GlobalModule, AuthModule, CampaignsModule, FormsModule, TicketIngestModule, SamplingModule, AuditModule, SlaEngineModule, ReleaseModule, DisputeModule, CalibrationModule, RubricRevisionModule, NotificationsModule, MailModule, UsersModule, DashboardModule],
   controllers: [AppController],
   providers: [AppService],
 })

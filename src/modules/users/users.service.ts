@@ -4,6 +4,7 @@ import { User, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
+// Refreshing types
 export class UsersService {
     constructor(private prisma: PrismaService) { }
 
@@ -17,12 +18,36 @@ export class UsersService {
                     { eid: identifier.trim() }
                 ]
             },
+            include: {
+                userRole: {
+                    include: {
+                        permissions: {
+                            include: { permission: true }
+                        }
+                    }
+                },
+                customPermissions: {
+                    include: { permission: true }
+                }
+            }
         });
     }
 
     async findById(id: string): Promise<User | null> {
         return this.prisma.user.findUnique({
             where: { id },
+            include: {
+                userRole: {
+                    include: {
+                        permissions: {
+                            include: { permission: true }
+                        }
+                    }
+                },
+                customPermissions: {
+                    include: { permission: true }
+                }
+            }
         });
     }
 
@@ -30,7 +55,7 @@ export class UsersService {
         let where: any = { isActive: true };
 
         // RBAC: TLs see their own team + any campaign they are assigned to
-        if (user && [Role.QA_TL, Role.QA_MANAGER, Role.OPS_TL, Role.OPS_MANAGER, Role.SDM].includes(user.role)) {
+        if (user && [Role.QA, Role.QA_TL, Role.QA_MANAGER, Role.OPS_TL, Role.OPS_MANAGER, Role.SDM].includes(user.role)) {
             const assignments = await this.prisma.campaignQA.findMany({
                 where: { userId: user.id },
                 include: { campaign: true }
@@ -93,6 +118,10 @@ export class UsersService {
         const { password, ...userData } = data;
         const hashedPassword = await bcrypt.hash(password || 'Standard123!', 10);
 
+        // Dynamic RBAC: Get Role ID
+        const targetRole = userData.role || 'AGENT';
+        const userRole = await this.prisma.userRole.findUnique({ where: { name: targetRole } });
+
         // Sanitize string fields
         const sanitizedData = Object.entries(userData).reduce((acc, [key, value]) => {
             if (typeof value === 'string') {
@@ -107,7 +136,8 @@ export class UsersService {
             data: {
                 ...sanitizedData,
                 password: hashedPassword,
-                mustChangePassword: true
+                mustChangePassword: true,
+                roleId: userRole?.id
             }
         });
     }
@@ -120,12 +150,17 @@ export class UsersService {
         const activeEids = users.filter(u => u.eid).map(u => String(u.eid));
         const activeEmails = users.filter(u => !u.eid && u.email).map(u => u.email);
 
+        // Pre-fetch all dynamic roles to map them
+        const allRoles = await this.prisma.userRole.findMany();
+        const roleMap = new Map(allRoles.map(r => [r.name, r.id]));
+
         for (let i = 0; i < users.length; i += chunkSize) {
             const userChunk = users.slice(i, i + chunkSize);
 
             await Promise.all(userChunk.map(async (u) => {
                 const role = u.role as Role || Role.AGENT;
                 const billable = u.billable === true || u.billable === 'true' || u.billable === 'Yes';
+                const roleId = roleMap.get(role);
 
                 // Robust lookup: Search by EID or Email (case-insensitive)
                 const existingUser = await this.findOne(u.eid || u.email);
@@ -152,7 +187,10 @@ export class UsersService {
                             // Ensure email stays consistent with file if provided
                             ...(u.email ? { email: u.email.toLowerCase().trim() } : {}),
                             // Ensure EID stays consistent with file if provided
-                            ...(u.eid ? { eid: String(u.eid).trim() } : {})
+                            ...(u.eid ? { eid: String(u.eid).trim() } : {}),
+                            // Update dynamic role mapping
+                            roleId: roleId,
+                            role: role
                         }
                     });
                 } else {
@@ -164,7 +202,8 @@ export class UsersService {
                             email: u.email ? u.email.toLowerCase().trim() : (u.eid ? `${u.eid.trim()}@flatworld.ph` : `user-${Math.random().toString(36).substring(7)}@placeholder.com`),
                             eid: u.eid ? String(u.eid).trim() : null,
                             password: defaultPassword,
-                            mustChangePassword: true
+                            mustChangePassword: true,
+                            roleId: roleId
                         }
                     });
                 }
@@ -237,9 +276,60 @@ export class UsersService {
     }
 
     async updateUser(id: string, data: any) {
+        // If role is being updated, we must update the roleId mapping
+        let updateData = { ...data };
+
+        if (data.role) {
+            const userRole = await this.prisma.userRole.findUnique({ where: { name: data.role } });
+            if (userRole) {
+                updateData.roleId = userRole.id;
+            }
+        }
+
         return this.prisma.user.update({
             where: { id },
-            data
+            data: updateData
+        });
+    }
+
+    async findAllRoles() {
+        return this.prisma.userRole.findMany({
+            include: {
+                permissions: {
+                    include: { permission: true }
+                }
+            },
+            orderBy: { name: 'asc' }
+        });
+    }
+
+    async updateRolePermissions(roleId: string, permissionCodes: string[]) {
+        // 1. Get all permission IDs for the codes
+        const permissions = await this.prisma.permission.findMany({
+            where: { code: { in: permissionCodes } }
+        });
+
+        // 2. Clear existing permissions
+        await this.prisma.rolePermission.deleteMany({
+            where: { roleId }
+        });
+
+        // 3. Add new ones
+        if (permissions.length > 0) {
+            await this.prisma.rolePermission.createMany({
+                data: permissions.map(p => ({
+                    roleId,
+                    permissionId: p.id
+                }))
+            });
+        }
+
+        return this.findAllRoles(); // Return updated list
+    }
+
+    async getAllPermissions() {
+        return this.prisma.permission.findMany({
+            orderBy: { module: 'asc' }
         });
     }
 

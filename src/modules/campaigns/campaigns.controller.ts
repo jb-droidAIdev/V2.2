@@ -2,9 +2,9 @@ import { Controller, Get, Post, Body, Param, Patch, UseGuards, Delete, Req, Http
 import { CampaignsService } from './campaigns.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
-import { PermissionsGuard } from '../auth/permissions.guard';
-import { Permissions } from '../auth/permissions.decorator';
-import { Permission } from '../auth/permissions.service';
+import { PermissionsGuard } from '../auth/permissions/permissions.guard';
+import { Permissions } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permissions.service';
 
 
 @Controller('campaigns')
@@ -57,10 +57,10 @@ export class CampaignsController {
     async remove(@Param('id') id: string) {
         try {
             return await this.campaignsService.remove(id);
-        } catch (error) {
+        } catch (error: any) {
             console.error('Delete Campaign Error:', error);
             throw new HttpException(
-                error.message || 'Failed to delete campaign due to checks',
+                error?.message || 'Failed to delete campaign due to checks',
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         }

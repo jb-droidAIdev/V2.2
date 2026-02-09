@@ -40,6 +40,11 @@ model User {
   createdFormVersions        MonitoringFormVersion[]  @relation("FormVersionCreator")
   notifications              Notification[]
   uploadedBatches            TicketUploadBatch[]
+  
+  // RBAC Relations
+  roleId                     String?
+  userRole                   UserRole?                @relation(fields: [roleId], references: [id])
+  customPermissions          UserPermission[]
 }
 
 model Campaign {
@@ -441,6 +446,42 @@ enum Role {
   QA_MANAGER
   OPS_MANAGER
   SDM
+}
+
+model UserRole {
+  id          String           @id @default(uuid())
+  name        String           @unique
+  description String?
+  isSystem    Boolean          @default(false)
+  users       User[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String           @id @default(uuid())
+  code        String           @unique
+  description String
+  module      String
+  roles       RolePermission[]
+  users       UserPermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         UserRole   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserPermission {
+  userId       String
+  permissionId String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, permissionId])
 }
 
 enum AuditStatus {

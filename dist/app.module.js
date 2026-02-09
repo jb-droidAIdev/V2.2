@@ -26,12 +26,13 @@ const mail_module_1 = require("./modules/mail/mail.module");
 const global_module_1 = require("./global.module");
 const users_module_1 = require("./modules/users/users.module");
 const dashboard_module_1 = require("./modules/dashboard/dashboard.module");
+const ai_analysis_module_1 = require("./modules/ai-analysis/ai-analysis.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
 exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
-        imports: [global_module_1.GlobalModule, auth_module_1.AuthModule, campaigns_module_1.CampaignsModule, forms_module_1.FormsModule, ticket_ingest_module_1.TicketIngestModule, sampling_module_1.SamplingModule, audit_module_1.AuditModule, sla_engine_module_1.SlaEngineModule, release_module_1.ReleaseModule, dispute_module_1.DisputeModule, calibration_module_1.CalibrationModule, rubric_revision_module_1.RubricRevisionModule, notifications_module_1.NotificationsModule, mail_module_1.MailModule, users_module_1.UsersModule, dashboard_module_1.DashboardModule],
+        imports: [global_module_1.GlobalModule, auth_module_1.AuthModule, campaigns_module_1.CampaignsModule, forms_module_1.FormsModule, ticket_ingest_module_1.TicketIngestModule, sampling_module_1.SamplingModule, audit_module_1.AuditModule, sla_engine_module_1.SlaEngineModule, release_module_1.ReleaseModule, dispute_module_1.DisputeModule, calibration_module_1.CalibrationModule, rubric_revision_module_1.RubricRevisionModule, notifications_module_1.NotificationsModule, mail_module_1.MailModule, users_module_1.UsersModule, dashboard_module_1.DashboardModule, ai_analysis_module_1.AiAnalysisModule],
         controllers: [app_controller_1.AppController],
         providers: [app_service_1.AppService],
     })

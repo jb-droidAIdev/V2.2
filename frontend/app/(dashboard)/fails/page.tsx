@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Loader2, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import api from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
+import InitialsContainer from '@/components/InitialsContainer';
 
 export default function FailedAuditsPage() {
     const router = useRouter();
@@ -69,9 +70,11 @@ export default function FailedAuditsPage() {
                                         <tr key={`${audit.id}-${idx}`} className="group hover:bg-white/[0.02] transition-colors">
                                             <td className="py-4 pl-4">
                                                 <div className="flex items-center gap-3">
-                                                    <div className="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-400 font-bold text-xs">
-                                                        {audit.agent?.name?.substring(0, 2).toUpperCase()}
-                                                    </div>
+                                                    <InitialsContainer
+                                                        name={audit.agent?.name}
+                                                        role="AGENT"
+                                                        size="sm"
+                                                    />
                                                     <div className="flex flex-col">
                                                         <span className="font-bold text-slate-200 text-xs">{audit.agent?.name}</span>
                                                         <span className="text-[10px] text-slate-500 font-medium">{audit.agent?.employeeTeam || 'Unassigned'}</span>

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import api from '@/lib/api';
+import InitialsContainer from '@/components/InitialsContainer';
 import {
     PieChart, // Add this
     Pie,      // Add this
@@ -436,14 +437,11 @@ export default function DashboardPage() {
                                                             >
                                                                 <td className="py-3 px-4">
                                                                     <div className="flex items-center gap-3">
-                                                                        <div className={cn(
-                                                                            "w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold",
-                                                                            agent.avgScore >= 95 ? "bg-green-500/10 text-green-400" :
-                                                                                agent.avgScore >= 88 ? "bg-blue-500/10 text-blue-400" :
-                                                                                    "bg-amber-500/10 text-amber-400"
-                                                                        )}>
-                                                                            {agent.agentName?.substring(0, 2).toUpperCase() || 'AG'}
-                                                                        </div>
+                                                                        <InitialsContainer
+                                                                            name={agent.agentName}
+                                                                            role="AGENT"
+                                                                            size="md"
+                                                                        />
                                                                         <span className="font-bold text-slate-200 text-sm">
                                                                             {agent.agentName || 'Unknown Agent'}
                                                                         </span>

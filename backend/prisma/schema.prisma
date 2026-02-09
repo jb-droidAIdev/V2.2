@@ -40,6 +40,7 @@ model User {
   createdFormVersions        MonitoringFormVersion[]  @relation("FormVersionCreator")
   notifications              Notification[]
   uploadedBatches            TicketUploadBatch[]
+  auditUserViews             AuditUserView[]
   
   // RBAC Relations
   roleId                     String?
@@ -201,6 +202,18 @@ model Audit {
   calibrationTickets CalibrationTicket[]
   dispute            Dispute?
   releaseInfo        ReleaseRecord?
+  userViews          AuditUserView[]
+}
+
+model AuditUserView {
+  id        String   @id @default(uuid())
+  auditId   String
+  userId    String
+  viewedAt  DateTime @default(now())
+  audit     Audit    @relation(fields: [auditId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([auditId, userId])
 }
 
 model AuditFieldValue {

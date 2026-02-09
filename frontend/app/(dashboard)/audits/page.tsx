@@ -149,6 +149,9 @@ export default function AuditsPage() {
             const res = await api.get(`/audits/${id}`);
             setPreviewTarget(res.data);
 
+            // Mark as read locally
+            setAudits(prev => prev.map(a => a.id === id ? { ...a, isUnread: false } : a));
+
             // Check for existing dispute
             try {
                 const disputeRes = await api.get(`/disputes/audit/${id}`);

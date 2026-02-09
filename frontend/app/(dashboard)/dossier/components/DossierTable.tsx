@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import { Pencil, Trash2, ShieldCheck, User, UserMinus, Layers } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import InitialsContainer from '@/components/InitialsContainer';
 
 interface DossierTableProps {
     users: any[];
@@ -51,9 +52,11 @@ export default function DossierTable({ users, onDelete, onEdit, onRemoveFromGrou
                             </td>
                             <td className="px-6 py-3.5">
                                 <div className="flex items-center gap-3">
-                                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-[10px] font-bold text-white shadow-lg">
-                                        {item.name.split(' ').map((n: string) => n[0]).join('')}
-                                    </div>
+                                    <InitialsContainer
+                                        name={item.name}
+                                        role={item.role}
+                                        size="sm"
+                                    />
                                     <div className="flex flex-col">
                                         <span className="font-bold text-slate-200 text-xs">{item.name}</span>
                                         <span className="text-[10px] text-slate-500 font-medium">{item.email}</span>

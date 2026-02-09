@@ -49,8 +49,8 @@ export class AuditController {
 
     @UseGuards(AuthGuard('jwt'))
     @Get(':id')
-    findOne(@Param('id') id: string) {
-        return this.auditService.findOne(id);
+    findOne(@Param('id') id: string, @Request() req: any) {
+        return this.auditService.findOne(id, req.user.id);
     }
 
     @UseGuards(AuthGuard('jwt'))

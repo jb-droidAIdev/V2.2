@@ -39,7 +39,10 @@ export class DisputeService {
             // Update Audit status
             await tx.audit.update({
                 where: { id: auditId },
-                data: { status: AuditStatus.DISPUTED }
+                data: {
+                    status: AuditStatus.DISPUTED,
+                    lastActionAt: new Date()
+                }
             });
 
             return tx.dispute.create({
@@ -106,13 +109,22 @@ export class DisputeService {
                     data: { status: anyRejected ? DisputeStatus.QA_REJECTED : DisputeStatus.FINALIZED }
                 });
 
+                // Update Audit lastActionAt on significant dispute state change
+                await tx.audit.update({
+                    where: { id: allItems[0].dispute.auditId },
+                    data: { lastActionAt: new Date() }
+                });
+
                 // Update Audit Status based on QA verdict
                 const auditId = allItems[0].dispute.auditId;
                 if (allAccepted) {
                     // QA Reviewed (Accepted) - Audit moves to "Resolved" (RELEASED)
                     await tx.audit.update({
                         where: { id: auditId },
-                        data: { status: AuditStatus.RELEASED }
+                        data: {
+                            status: AuditStatus.RELEASED,
+                            lastActionAt: new Date()
+                        }
                     });
                 }
                 // If any rejected, audit stays DISPUTED until re-appeal or deadline
@@ -140,7 +152,10 @@ export class DisputeService {
         return this.prisma.$transaction(async (tx) => {
             await tx.audit.update({
                 where: { id: dispute.auditId },
-                data: { status: AuditStatus.REAPPEALED }
+                data: {
+                    status: AuditStatus.REAPPEALED,
+                    lastActionAt: new Date()
+                }
             });
 
             await tx.dispute.update({
@@ -218,7 +233,10 @@ export class DisputeService {
                     // Audit status remains REAPPEALED to indicate coaching required
                     await tx.audit.update({
                         where: { id: auditId },
-                        data: { status: AuditStatus.REAPPEALED }
+                        data: {
+                            status: AuditStatus.REAPPEALED,
+                            lastActionAt: new Date()
+                        }
                     });
                 }
             }

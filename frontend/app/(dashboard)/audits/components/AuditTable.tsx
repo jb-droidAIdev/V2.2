@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { Loader2, ShieldCheck, Eye, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
+import InitialsContainer from '@/components/InitialsContainer';
 import { getStatusColor } from './utils';
 
 interface AuditTableProps {
@@ -35,8 +36,8 @@ export default function AuditTable({
                         <thead>
                             <tr className="bg-white/5 border-b border-white/10">
                                 <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Reference</th>
-                                <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Agent</th>
-                                <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Auditor</th>
+                                <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest text-left">Agent</th>
+                                <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest text-left">Auditor</th>
                                 <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Score</th>
                                 <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Status</th>
                                 <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Configuration</th>
@@ -51,30 +52,44 @@ export default function AuditTable({
                                     initial={{ opacity: 0, y: 10 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ delay: idx * 0.05 }}
-                                    className="hover:bg-white/[0.02] transition-colors group"
+                                    className={cn(
+                                        "hover:bg-white/[0.02] transition-colors group relative",
+                                        audit.isUnread && "animate-pulse-unread"
+                                    )}
                                 >
-                                    <td className="px-6 py-3.5">
+                                    <td className="px-6 py-3.5 relative min-w-[140px]">
+                                        {audit.isUnread && (
+                                            <div className="absolute left-4 top-1/2 -translate-y-1/2">
+                                                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.6)] animate-pulse" />
+                                            </div>
+                                        )}
                                         <div className="flex flex-col items-center justify-center">
-                                            <span className="font-mono text-blue-400 font-bold text-xs">
+                                            <span className="font-mono text-blue-400 font-bold text-xs uppercase tracking-wider">
                                                 {audit.sampledTicket?.ticket?.externalTicketId || audit.ticketReference || 'N/A'}
                                             </span>
                                             <span className="text-[10px] text-slate-500 uppercase tracking-tighter">#{audit.id.slice(0, 8)}</span>
                                         </div>
                                     </td>
-                                    <td className="px-6 py-3.5">
-                                        <div className="flex items-center justify-center gap-3">
-                                            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-[10px] font-bold text-white shadow-lg">
-                                                {audit.agent.name.split(' ').map((n: string) => n[0]).join('')}
-                                            </div>
+                                    <td className="px-6 py-3.5 text-left">
+                                        <div className="flex items-center justify-start gap-3">
+                                            <InitialsContainer
+                                                name={audit.agent.name}
+                                                role="AGENT"
+                                                size="sm"
+                                            />
                                             <div className="flex flex-col items-start min-w-[120px]">
                                                 <span className="font-bold text-slate-200 text-xs">{audit.agent.name}</span>
                                                 <span className="text-[10px] text-slate-500 font-medium">{audit.agent.eid}</span>
                                             </div>
                                         </div>
                                     </td>
-                                    <td className="px-6 py-3.5 text-slate-400 font-medium text-xs">
-                                        <div className="flex items-center justify-center gap-2">
-                                            <ShieldCheck className="w-3.5 h-3.5 text-slate-500" />
+                                    <td className="px-6 py-3.5 text-slate-400 font-medium text-xs text-left">
+                                        <div className="flex items-center justify-start gap-2">
+                                            <InitialsContainer
+                                                name={audit.auditor.name}
+                                                role={audit.auditor.role || 'QA'}
+                                                size="xs"
+                                            />
                                             {audit.auditor.name}
                                         </div>
                                     </td>

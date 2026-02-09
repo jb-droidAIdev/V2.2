@@ -76,6 +76,22 @@ body {
   }
 }
 
+@keyframes pulse-unread {
+
+  0%,
+  100% {
+    background-color: rgba(59, 130, 246, 0.02);
+  }
+
+  50% {
+    background-color: rgba(59, 130, 246, 0.08);
+  }
+}
+
+.animate-pulse-unread {
+  animation: pulse-unread 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
 .glass {
   background: rgba(15, 23, 42, 0.6);
   backdrop-filter: blur(12px);

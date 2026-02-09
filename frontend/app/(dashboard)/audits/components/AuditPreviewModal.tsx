@@ -78,24 +78,64 @@ export default function AuditPreviewModal({
 
                     {/* Content */}
                     <div className="p-6 overflow-y-auto custom-scrollbar space-y-8">
-                        {/* Metadata Grid */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-white/[0.02] p-6 rounded-3xl border border-white/5">
-                            <div className="flex flex-col items-center justify-center text-center">
-                                <p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1.5">Reference</p>
-                                <p className="text-base font-bold text-white">{previewTarget.sampledTicket?.ticket?.externalTicketId || previewTarget.ticketReference || 'N/A'}</p>
-                            </div>
-                            <div className="flex flex-col items-center justify-center text-center">
-                                <p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1.5">Agent</p>
-                                <p className="text-base font-bold text-white">{previewTarget.agent?.name}</p>
-                            </div>
-                            <div className="flex flex-col items-center justify-center text-center">
-                                <p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1.5">Auditor</p>
-                                <p className="text-base font-bold text-white">{previewTarget.auditor?.name}</p>
-                            </div>
-                            <div className="flex flex-col items-center justify-center text-center">
-                                <p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1.5">Score</p>
-                                <p className={cn("text-base font-black", previewTarget.score >= 90 ? "text-emerald-400" : previewTarget.score >= 70 ? "text-amber-400" : "text-rose-400")}>{previewTarget.score}%</p>
-                            </div>
+                        {/* Redesigned Metadata Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                            {[
+                                { label: 'REFERENCE', value: previewTarget.sampledTicket?.ticket?.externalTicketId || previewTarget.ticketReference || 'N/A', sub: previewTarget.id.slice(0, 8), iconColor: 'text-blue-400' },
+                                { label: 'AGENT', value: previewTarget.agent?.name, sub: previewTarget.agent?.eid, iconColor: 'text-indigo-400' },
+                                { label: 'AUDITOR', value: previewTarget.auditor?.name, sub: previewTarget.auditor?.role || 'QA', iconColor: 'text-purple-400' },
+                                {
+                                    label: 'SCORE',
+                                    value: `${previewTarget.score}%`,
+                                    sub: previewTarget.score >= 90 ? 'PASSED' : 'FAILED',
+                                    iconColor: previewTarget.score >= 90 ? 'text-emerald-400' : 'text-rose-400',
+                                    isScore: true
+                                }
+                            ].map((item, i) => (
+                                <div key={i} className="group relative overflow-hidden bg-white/[0.02] border border-white/5 rounded-2xl px-6 min-h-[3.5rem] py-3 transition-all hover:bg-white/[0.04] hover:border-white/10 flex items-center">
+                                    <div className="relative z-10 flex items-start justify-between w-full h-full">
+                                        <div className="flex items-center gap-4 min-w-0">
+                                            {/* Label Box */}
+                                            <div className="flex items-center shrink-0">
+                                                <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest leading-none">{item.label}</span>
+                                            </div>
+
+                                            <div className="w-px h-3 bg-white/10 shrink-0" />
+
+                                            {/* Data Box */}
+                                            <div className="flex items-center flex-wrap gap-x-3 gap-y-1 min-w-0">
+                                                <span className={cn(
+                                                    "text-sm font-bold text-white leading-tight",
+                                                    item.isScore && (previewTarget.score >= 90 ? "text-emerald-400" : "text-rose-400")
+                                                )}>
+                                                    {item.value}
+                                                </span>
+                                                {item.isScore ? (
+                                                    <div className="flex items-center">
+                                                        <span className={cn(
+                                                            "text-[8px] font-black px-1.5 py-0.5 rounded border tracking-[0.1em] shrink-0 leading-none",
+                                                            previewTarget.score >= 90 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                                                        )}>
+                                                            {item.sub}
+                                                        </span>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex items-center">
+                                                        <span className="text-[9px] font-medium text-slate-500 opacity-60 leading-none">#{item.sub}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className={cn("w-1 h-1 rounded-full animate-pulse shrink-0 ml-4", item.iconColor.replace('text-', 'bg-'))} />
+                                    </div>
+
+                                    {/* Abstract background glow */}
+                                    <div className={cn(
+                                        "absolute -right-2 -bottom-2 w-12 h-12 blur-2xl opacity-5 transition-opacity group-hover:opacity-10",
+                                        item.iconColor.replace('text-', 'bg-')
+                                    )} />
+                                </div>
+                            ))}
                         </div>
 
                         {/* Evaluation Form - Section Based */}

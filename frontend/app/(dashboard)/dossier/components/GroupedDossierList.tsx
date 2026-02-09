@@ -115,11 +115,11 @@ function CollapsibleGroup({
 
     return (
         <div className={cn(
-            "bg-[#0f172a]/40 border border-white/10 rounded-3xl overflow-visible backdrop-blur-xl relative transition-all",
-            isMenuOpen ? "z-50" : "z-0"
+            "bg-[#0f172a]/40 border border-white/10 rounded-3xl backdrop-blur-xl relative transition-all shadow-lg hover:shadow-blue-500/5",
+            isMenuOpen ? "overflow-visible z-50 shadow-2xl scale-[1.01]" : "overflow-hidden z-0"
         )}>
             <div
-                className="w-full flex items-center justify-between p-6 bg-white/5 hover:bg-white/10 transition-colors rounded-t-3xl"
+                className="w-full flex items-center justify-between p-6 bg-white/5 hover:bg-white/10 transition-colors"
             >
                 <div
                     className="flex items-center gap-4 cursor-pointer flex-1"
@@ -200,7 +200,7 @@ function CollapsibleGroup({
                         animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
                         transition={{ duration: 0.3, ease: 'easeInOut' }}
-                        className="overflow-hidden"
+                        className="overflow-hidden rounded-b-3xl"
                     >
                         <DossierTable
                             users={users}

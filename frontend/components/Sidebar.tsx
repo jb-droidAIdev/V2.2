@@ -21,6 +21,7 @@ import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import Image from 'next/image';
+import InitialsContainer from './InitialsContainer';
 
 const menuItems = [
     { name: 'Dashboard', icon: LayoutDashboard, href: '/dashboard', permission: 'PAGE_DASHBOARD' },
@@ -180,9 +181,12 @@ export default function Sidebar() {
 
             <div className="p-4 mt-auto border-t border-white/5 bg-[#0a0a0b]/50 overflow-hidden space-y-4">
                 <div className="flex items-center gap-3 px-3 py-2">
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-xs font-black text-white shadow-lg border border-white/10 shrink-0 capitalize">
-                        {userName ? userName[0] : '?'}
-                    </div>
+                    <InitialsContainer
+                        name={userName}
+                        role={userRole}
+                        size="lg"
+                        className="shadow-lg border-white/10"
+                    />
                     <AnimatePresence>
                         {isHovered && (
                             <motion.div

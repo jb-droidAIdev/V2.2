@@ -13,7 +13,7 @@ import {
     X,
     Loader2
 } from 'lucide-react';
-import { CalibrationService, CalibrationAnchor } from '@/lib/calibration-service';
+import { CalibrationService, CalibrationAnchor } from '../../services/calibration-service';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 

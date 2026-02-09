@@ -20,9 +20,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     async validate(payload: any) {
-        const user = await this.usersService.findById(payload.sub);
+        const user = await this.usersService.findById(payload.sub) as any;
         if (!user) return null;
-        const { password, ...result } = user;
-        return result;
+
+        const { password, userRole, customPermissions, ...result } = user;
+
+        // Flatten permissions
+        const rolePerms = userRole?.permissions?.map((p: any) => p.permission.code) || [];
+        const customPerms = customPermissions?.map((p: any) => p.permission.code) || [];
+
+        // Combine unique
+        const permissions = Array.from(new Set([...rolePerms, ...customPerms]));
+
+        return { ...result, permissions, roleName: userRole?.name || user.role };
     }
 }

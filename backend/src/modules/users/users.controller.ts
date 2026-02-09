@@ -2,15 +2,36 @@ import { Controller, Get, UseGuards, Param, Req, Post, Body, Delete, Patch } fro
 import { UsersService } from './users.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
-import { PermissionsGuard } from '../auth/permissions.guard';
-import { Permissions } from '../auth/permissions.decorator';
-import { Permission } from '../auth/permissions.service';
+import { PermissionsGuard } from '../auth/permissions/permissions.guard';
+import { Permissions } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permissions.service';
 
 
 @Controller('users')
 @UseGuards(AuthGuard('jwt'), RolesGuard, PermissionsGuard)
 export class UsersController {
     constructor(private readonly usersService: UsersService) { }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Permissions(Permission.USER_MANAGE)
+    @Get('config/roles')
+    async getRoles() {
+        return this.usersService.findAllRoles();
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Permissions(Permission.USER_MANAGE)
+    @Get('config/permissions')
+    async getPermissions() {
+        return this.usersService.getAllPermissions();
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Permissions(Permission.USER_MANAGE)
+    @Patch('config/roles/:id')
+    async updateRolePermissions(@Param('id') id: string, @Body() body: { permissions: string[] }) {
+        return this.usersService.updateRolePermissions(id, body.permissions);
+    }
 
     @Get()
     async findAll(@Req() req: any) {
@@ -74,4 +95,5 @@ export class UsersController {
     async remove(@Param('id') id: string) {
         return this.usersService.remove(id);
     }
+
 }

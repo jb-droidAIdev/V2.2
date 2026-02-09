@@ -17,7 +17,7 @@ import {
     Loader2
 } from 'lucide-react';
 import api from '@/lib/api';
-import { CalibrationService, CreateCalibrationSessionDto } from '@/lib/calibration-service';
+import { CalibrationService, CreateCalibrationSessionDto } from '../services/calibration-service';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';

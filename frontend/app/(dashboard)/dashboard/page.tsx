@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import {
@@ -73,12 +74,14 @@ const CustomTooltip = ({ active, payload, label, unit = "" }: any) => {
 };
 
 export default function DashboardPage() {
+    const router = useRouter();
     const [stats, setStats] = useState<any>(null);
     const [drilldownCategory, setDrilldownCategory] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isFiltering, setIsFiltering] = useState(false);
     const [userName, setUserName] = useState<string>('');
     const [userRole, setUserRole] = useState<string>('');
+    const [permissions, setPermissions] = useState<string[]>([]);
     const [greeting, setGreeting] = useState<string>('Good Morning');
     const [isFilterOpen, setIsFilterOpen] = useState(false);
     const [isFlipped, setIsFlipped] = useState(false); // Quality Trend flip
@@ -148,6 +151,8 @@ export default function DashboardPage() {
                 const user = JSON.parse(userStr);
                 setUserName(user.name?.split(' ')[0] || 'User');
                 setUserRole(user.role || '');
+                setPermissions(user.permissions || []);
+
                 if (user.role === 'AGENT') {
                     // setIsHeatmapFlipped(true); // Removed auto-flip, agent sees heatmap by default
                 }
@@ -163,6 +168,20 @@ export default function DashboardPage() {
 
         fetchData(true);
     }, [fetchData]);
+
+    useEffect(() => {
+        if (!isLoading && !permissions.includes('PAGE_DASHBOARD') && userRole !== 'ADMIN') {
+            router.push('/login');
+        }
+    }, [isLoading, permissions, userRole, router]);
+
+    // Conditional flip for OPS roles based on active progressions
+    useEffect(() => {
+        if (stats && (userRole === 'OPS_TL' || userRole === 'OPS_MANAGER')) {
+            const hasProgressions = stats.activeProgressions && stats.activeProgressions.length > 0;
+            setIsHeatmapFlipped(hasProgressions);
+        }
+    }, [stats, userRole]);
 
     // Flip to back (Policy) manually or leave it as front by default
     // We no longer auto-flip based on agent selection as per the new requirement
@@ -216,257 +235,271 @@ export default function DashboardPage() {
                     {/* Left Column: Stats & Trend (Squeezed & Aligned) */}
                     <div className="lg:col-span-2 space-y-6">
                         {/* Squeezed Stats Grid */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                            {statCards.map((stat, idx) => (
-                                <div
-                                    key={stat.name}
-                                    className="glass p-4 rounded-[2rem] relative overflow-hidden group hover:bg-white/[0.04] transition-all cursor-default border border-white/5 shadow-2xl"
-                                >
-                                    <div className="flex justify-between items-start">
-                                        <div className={cn("p-2 rounded-xl bg-white/5 shadow-inner", stat.color)}>
-                                            <stat.icon className="w-5 h-5" />
+                        {permissions.includes('DASHBOARD_VIEW') || userRole === 'ADMIN' ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                {statCards.map((stat, idx) => (
+                                    <div
+                                        key={stat.name}
+                                        className="glass p-4 rounded-[2rem] relative overflow-hidden group hover:bg-white/[0.04] transition-all cursor-default border border-white/5 shadow-2xl"
+                                    >
+                                        <div className="flex justify-between items-start">
+                                            <div className={cn("p-2 rounded-xl bg-white/5 shadow-inner", stat.color)}>
+                                                <stat.icon className="w-5 h-5" />
+                                            </div>
+                                            <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest bg-white/5 px-2 py-1 rounded-lg">
+                                                {stat.change}
+                                            </span>
                                         </div>
-                                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest bg-white/5 px-2 py-1 rounded-lg">
-                                            {stat.change}
-                                        </span>
+                                        <div className="mt-6">
+                                            <p className="text-[9px] font-bold text-slate-500 uppercase tracking-[0.2em]">{stat.name}</p>
+                                            <p className="text-3xl font-black mt-1 text-white tabular-nums tracking-tighter">{stat.value}</p>
+                                        </div>
+                                        {/* Subtle decorative glow */}
+                                        <div className={cn(
+                                            "absolute -bottom-2 -right-2 w-16 h-16 blur-2xl opacity-10 transition-opacity group-hover:opacity-20",
+                                            stat.color.replace('text-', 'bg-')
+                                        )} />
                                     </div>
-                                    <div className="mt-6">
-                                        <p className="text-[9px] font-bold text-slate-500 uppercase tracking-[0.2em]">{stat.name}</p>
-                                        <p className="text-3xl font-black mt-1 text-white tabular-nums tracking-tighter">{stat.value}</p>
-                                    </div>
-                                    {/* Subtle decorative glow */}
-                                    <div className={cn(
-                                        "absolute -bottom-2 -right-2 w-16 h-16 blur-2xl opacity-10 transition-opacity group-hover:opacity-20",
-                                        stat.color.replace('text-', 'bg-')
-                                    )} />
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="glass p-8 rounded-[2rem] border border-white/5 flex items-center gap-4 bg-white/[0.02]">
+                                <div className="p-3 bg-amber-500/10 rounded-2xl border border-amber-500/20">
+                                    <Sparkles className="w-6 h-6 text-amber-500" />
                                 </div>
-                            ))}
-                        </div>
+                                <div>
+                                    <h3 className="text-white font-bold tracking-tight">Advanced Metrics Locked</h3>
+                                    <p className="text-slate-500 text-sm">Your current role does not have "View Advanced Stats" enabled. Contact your administrator to unlock performance trends.</p>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Trend Area Chart - FLIP CARD */}
-                        <div
-                            className="relative"
-                            style={{ perspective: '1000px', height: '470px' }}
-                        >
-                            <motion.div
-                                className="relative w-full h-full"
-                                style={{ transformStyle: 'preserve-3d' }}
-                                animate={{ rotateY: isFlipped ? 180 : 0 }}
-                                transition={{ duration: 0.6, ease: 'easeInOut' }}
+                        {(permissions.includes('DASHBOARD_VIEW') || userRole === 'ADMIN') && (
+                            <div
+                                className="relative"
+                                style={{ perspective: '1000px', height: '470px' }}
                             >
-                                {/* FRONT - Chart */}
-                                <div
-                                    className="absolute inset-0 glass rounded-[2.5rem] p-8 border border-white/5 shadow-2xl overflow-hidden"
-                                    style={{
-                                        backfaceVisibility: 'hidden',
-                                        WebkitBackfaceVisibility: 'hidden'
-                                    }}
+                                <motion.div
+                                    className="relative w-full h-full"
+                                    style={{ transformStyle: 'preserve-3d' }}
+                                    animate={{ rotateY: isFlipped ? 180 : 0 }}
+                                    transition={{ duration: 0.6, ease: 'easeInOut' }}
                                 >
-                                    <div className="flex justify-between items-center mb-8">
-                                        <div>
-                                            <h2 className="text-xl font-black text-white tracking-tight">Quality Trend</h2>
+                                    {/* FRONT - Chart */}
+                                    <div
+                                        className="absolute inset-0 glass rounded-[2.5rem] p-8 border border-white/5 shadow-2xl overflow-hidden"
+                                        style={{
+                                            backfaceVisibility: 'hidden',
+                                            WebkitBackfaceVisibility: 'hidden'
+                                        }}
+                                    >
+                                        <div className="flex justify-between items-center mb-8">
+                                            <div>
+                                                <h2 className="text-xl font-black text-white tracking-tight">Quality Trend</h2>
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                                <div className="flex bg-white/5 p-1 rounded-lg border border-white/5">
+                                                    {(['day', 'week', 'month'] as const).map((view) => (
+                                                        <button
+                                                            key={view}
+                                                            onClick={() => setTrendView(view)}
+                                                            className={cn(
+                                                                "px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all",
+                                                                trendView === view ? "bg-blue-500 text-white shadow-lg" : "text-slate-500 hover:text-white hover:bg-white/5"
+                                                            )}
+                                                        >
+                                                            {view === 'day' ? 'Daily' : view === 'week' ? 'Weekly' : 'Monthly'}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                                <button
+                                                    onClick={() => setIsFlipped(!isFlipped)}
+                                                    className="p-2 bg-blue-500/10 hover:bg-blue-500/20 rounded-lg border border-blue-500/20 transition-all group"
+                                                    title="View Agent Scores"
+                                                >
+                                                    <Users className="w-4 h-4 text-blue-400 group-hover:text-blue-300" />
+                                                </button>
+                                                <button
+                                                    onClick={() => setExpandedChart('trend')}
+                                                    className="p-2 bg-white/5 hover:bg-white/10 rounded-lg border border-white/5 transition-all group"
+                                                    title="Maximize Chart"
+                                                >
+                                                    <Maximize2 className="w-4 h-4 text-slate-400 group-hover:text-white" />
+                                                </button>
+                                            </div>
                                         </div>
-                                        <div className="flex items-center gap-3">
-                                            <div className="flex bg-white/5 p-1 rounded-lg border border-white/5">
-                                                {(['day', 'week', 'month'] as const).map((view) => (
-                                                    <button
-                                                        key={view}
-                                                        onClick={() => setTrendView(view)}
-                                                        className={cn(
-                                                            "px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all",
-                                                            trendView === view ? "bg-blue-500 text-white shadow-lg" : "text-slate-500 hover:text-white hover:bg-white/5"
+                                        <div className="h-[350px] w-full">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <AreaChart
+                                                    data={stats?.trend || []}
+                                                    margin={{ top: 20, right: 30, left: 0, bottom: 0 }}
+                                                >
+                                                    <defs>
+                                                        <linearGradient id="colorScore" x1="0" y1="0" x2="0" y2="1">
+                                                            <stop offset="5%" stopColor="#2563eb" stopOpacity={0.3} />
+                                                            <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
+                                                        </linearGradient>
+                                                    </defs>
+                                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#ffffff05" />
+                                                    <XAxis
+                                                        dataKey="date"
+                                                        axisLine={false}
+                                                        tickLine={false}
+                                                        tick={{ fill: '#64748b', fontSize: 10, fontWeight: 700 }}
+                                                        dy={10}
+                                                    />
+                                                    <YAxis
+                                                        domain={[0, 100]}
+                                                        axisLine={false}
+                                                        tickLine={false}
+                                                        tick={{ fill: '#64748b', fontSize: 10, fontWeight: 700 }}
+                                                        dx={-10}
+                                                        tickFormatter={(value) => `${value}%`}
+                                                    />
+                                                    <Tooltip
+                                                        content={<CustomTooltip unit="%" />}
+                                                        cursor={{ stroke: '#2563eb', strokeWidth: 2, strokeDasharray: '6 6' }}
+                                                    />
+                                                    <Area
+                                                        type="monotone"
+                                                        dataKey="avgScore"
+                                                        name="Average Score"
+                                                        stroke="#2563eb"
+                                                        strokeWidth={4}
+                                                        fillOpacity={1}
+                                                        fill="url(#colorScore)"
+                                                        connectNulls={true}
+                                                        animationDuration={2000}
+                                                        dot={{ r: 4, fill: '#2563eb', strokeWidth: 2, stroke: '#0f172a' }}
+                                                        activeDot={{ r: 6, strokeWidth: 0 }}
+                                                        label={(props: any) => (
+                                                            <text x={props.x} y={props.y - 12} fill="#cbd5e1" fontSize={10} fontWeight={700} textAnchor="middle">
+                                                                {props.value}%
+                                                            </text>
                                                         )}
-                                                    >
-                                                        {view === 'day' ? 'Daily' : view === 'week' ? 'Weekly' : 'Monthly'}
-                                                    </button>
-                                                ))}
+                                                    />
+                                                </AreaChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+
+                                    {/* BACK - Agent Scores Table */}
+                                    <div
+                                        className="absolute inset-0 glass rounded-[2.5rem] p-8 border border-white/5 shadow-2xl overflow-hidden"
+                                        style={{
+                                            backfaceVisibility: 'hidden',
+                                            WebkitBackfaceVisibility: 'hidden',
+                                            transform: 'rotateY(180deg)'
+                                        }}
+                                    >
+                                        <div className="flex justify-between items-center mb-8">
+                                            <div>
+                                                <h2 className="text-xl font-black text-white tracking-tight">Agent Scores</h2>
+                                                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">
+                                                    Performance Overview
+                                                </p>
                                             </div>
                                             <button
                                                 onClick={() => setIsFlipped(!isFlipped)}
                                                 className="p-2 bg-blue-500/10 hover:bg-blue-500/20 rounded-lg border border-blue-500/20 transition-all group"
-                                                title="View Agent Scores"
+                                                title="View Chart"
                                             >
-                                                <Users className="w-4 h-4 text-blue-400 group-hover:text-blue-300" />
-                                            </button>
-                                            <button
-                                                onClick={() => setExpandedChart('trend')}
-                                                className="p-2 bg-white/5 hover:bg-white/10 rounded-lg border border-white/5 transition-all group"
-                                                title="Maximize Chart"
-                                            >
-                                                <Maximize2 className="w-4 h-4 text-slate-400 group-hover:text-white" />
+                                                <TrendingUp className="w-4 h-4 text-blue-400 group-hover:text-blue-300" />
                                             </button>
                                         </div>
-                                    </div>
-                                    <div className="h-[350px] w-full">
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <AreaChart
-                                                data={stats?.trend || []}
-                                                margin={{ top: 20, right: 30, left: 0, bottom: 0 }}
-                                            >
-                                                <defs>
-                                                    <linearGradient id="colorScore" x1="0" y1="0" x2="0" y2="1">
-                                                        <stop offset="5%" stopColor="#2563eb" stopOpacity={0.3} />
-                                                        <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                                                    </linearGradient>
-                                                </defs>
-                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#ffffff05" />
-                                                <XAxis
-                                                    dataKey="date"
-                                                    axisLine={false}
-                                                    tickLine={false}
-                                                    tick={{ fill: '#64748b', fontSize: 10, fontWeight: 700 }}
-                                                    dy={10}
-                                                />
-                                                <YAxis
-                                                    domain={[0, 100]}
-                                                    axisLine={false}
-                                                    tickLine={false}
-                                                    tick={{ fill: '#64748b', fontSize: 10, fontWeight: 700 }}
-                                                    dx={-10}
-                                                    tickFormatter={(value) => `${value}%`}
-                                                />
-                                                <Tooltip
-                                                    content={<CustomTooltip unit="%" />}
-                                                    cursor={{ stroke: '#2563eb', strokeWidth: 2, strokeDasharray: '6 6' }}
-                                                />
-                                                <Area
-                                                    type="monotone"
-                                                    dataKey="avgScore"
-                                                    name="Average Score"
-                                                    stroke="#2563eb"
-                                                    strokeWidth={4}
-                                                    fillOpacity={1}
-                                                    fill="url(#colorScore)"
-                                                    connectNulls={true}
-                                                    animationDuration={2000}
-                                                    dot={{ r: 4, fill: '#2563eb', strokeWidth: 2, stroke: '#0f172a' }}
-                                                    activeDot={{ r: 6, strokeWidth: 0 }}
-                                                    label={(props: any) => (
-                                                        <text x={props.x} y={props.y - 12} fill="#cbd5e1" fontSize={10} fontWeight={700} textAnchor="middle">
-                                                            {props.value}%
-                                                        </text>
-                                                    )}
-                                                />
-                                            </AreaChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                </div>
 
-                                {/* BACK - Agent Scores Table */}
-                                <div
-                                    className="absolute inset-0 glass rounded-[2.5rem] p-8 border border-white/5 shadow-2xl overflow-hidden"
-                                    style={{
-                                        backfaceVisibility: 'hidden',
-                                        WebkitBackfaceVisibility: 'hidden',
-                                        transform: 'rotateY(180deg)'
-                                    }}
-                                >
-                                    <div className="flex justify-between items-center mb-8">
-                                        <div>
-                                            <h2 className="text-xl font-black text-white tracking-tight">Agent Scores</h2>
-                                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">
-                                                Performance Overview
-                                            </p>
-                                        </div>
-                                        <button
-                                            onClick={() => setIsFlipped(!isFlipped)}
-                                            className="p-2 bg-blue-500/10 hover:bg-blue-500/20 rounded-lg border border-blue-500/20 transition-all group"
-                                            title="View Chart"
-                                        >
-                                            <TrendingUp className="w-4 h-4 text-blue-400 group-hover:text-blue-300" />
-                                        </button>
-                                    </div>
-
-                                    <div className="h-[350px] overflow-y-auto custom-scrollbar">
-                                        <table className="w-full text-left border-collapse">
-                                            <thead className="sticky top-0 bg-[#0a0a0b] z-10">
-                                                <tr className="border-b border-white/10">
-                                                    <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-500 tracking-widest">
-                                                        Agent Name
-                                                    </th>
-                                                    <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-500 tracking-widest text-center">
-                                                        # of Audits
-                                                    </th>
-                                                    <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-500 tracking-widest text-right">
-                                                        Average Score
-                                                    </th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-white/5">
-                                                {stats?.agentScores && stats.agentScores.length > 0 ? (
-                                                    stats.agentScores.map((agent: any, idx: number) => (
-                                                        <motion.tr
-                                                            key={agent.agentId || idx}
-                                                            initial={{ opacity: 0, x: -20 }}
-                                                            animate={{ opacity: 1, x: 0 }}
-                                                            transition={{ delay: idx * 0.05 }}
-                                                            className="group hover:bg-white/[0.02] transition-colors"
-                                                        >
-                                                            <td className="py-3 px-4">
-                                                                <div className="flex items-center gap-3">
-                                                                    <div className={cn(
-                                                                        "w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold",
-                                                                        agent.avgScore >= 95 ? "bg-green-500/10 text-green-400" :
-                                                                            agent.avgScore >= 88 ? "bg-blue-500/10 text-blue-400" :
-                                                                                "bg-amber-500/10 text-amber-400"
-                                                                    )}>
-                                                                        {agent.agentName?.substring(0, 2).toUpperCase() || 'AG'}
-                                                                    </div>
-                                                                    <span className="font-bold text-slate-200 text-sm">
-                                                                        {agent.agentName || 'Unknown Agent'}
-                                                                    </span>
-                                                                </div>
-                                                            </td>
-                                                            <td className="py-3 px-4 text-center">
-                                                                <span className="inline-flex items-center justify-center px-3 py-1 rounded-lg bg-white/5 border border-white/5">
-                                                                    <span className="text-sm font-black text-white tabular-nums">
-                                                                        {agent.auditCount || 0}
-                                                                    </span>
-                                                                </span>
-                                                            </td>
-                                                            <td className="py-3 px-4 text-right">
-                                                                <div className="flex items-center justify-end gap-2">
-                                                                    <div className="flex-1 max-w-[100px] h-2 bg-white/5 rounded-full overflow-hidden">
-                                                                        <motion.div
-                                                                            className={cn(
-                                                                                "h-full rounded-full",
-                                                                                agent.avgScore >= 95 ? "bg-gradient-to-r from-green-500 to-emerald-400" :
-                                                                                    agent.avgScore >= 88 ? "bg-gradient-to-r from-blue-500 to-cyan-400" :
-                                                                                        "bg-gradient-to-r from-amber-500 to-orange-400"
-                                                                            )}
-                                                                            initial={{ width: 0 }}
-                                                                            animate={{ width: `${agent.avgScore || 0}%` }}
-                                                                            transition={{ duration: 1, delay: idx * 0.05 }}
-                                                                        />
-                                                                    </div>
-                                                                    <span className={cn(
-                                                                        "text-lg font-black tabular-nums min-w-[60px] text-right",
-                                                                        agent.avgScore >= 95 ? "text-green-400" :
-                                                                            agent.avgScore >= 88 ? "text-blue-400" :
-                                                                                "text-amber-400"
-                                                                    )}>
-                                                                        {agent.avgScore?.toFixed(1) || '0.0'}%
-                                                                    </span>
-                                                                </div>
-                                                            </td>
-                                                        </motion.tr>
-                                                    ))
-                                                ) : (
-                                                    <tr>
-                                                        <td colSpan={3} className="py-12 text-center">
-                                                            <div className="flex flex-col items-center gap-2">
-                                                                <Users className="w-8 h-8 text-slate-600" />
-                                                                <p className="text-sm text-slate-500 font-medium">No agent data available</p>
-                                                            </div>
-                                                        </td>
+                                        <div className="h-[350px] overflow-y-auto custom-scrollbar">
+                                            <table className="w-full text-left border-collapse">
+                                                <thead className="sticky top-0 bg-[#0a0a0b] z-10">
+                                                    <tr className="border-b border-white/10">
+                                                        <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-500 tracking-widest">
+                                                            Agent Name
+                                                        </th>
+                                                        <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-500 tracking-widest text-center">
+                                                            # of Audits
+                                                        </th>
+                                                        <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-500 tracking-widest text-right">
+                                                            Average Score
+                                                        </th>
                                                     </tr>
-                                                )}
-                                            </tbody>
-                                        </table>
+                                                </thead>
+                                                <tbody className="divide-y divide-white/5">
+                                                    {stats?.agentScores && stats.agentScores.length > 0 ? (
+                                                        stats.agentScores.map((agent: any, idx: number) => (
+                                                            <motion.tr
+                                                                key={agent.agentId || idx}
+                                                                initial={{ opacity: 0, x: -20 }}
+                                                                animate={{ opacity: 1, x: 0 }}
+                                                                transition={{ delay: idx * 0.05 }}
+                                                                className="group hover:bg-white/[0.02] transition-colors"
+                                                            >
+                                                                <td className="py-3 px-4">
+                                                                    <div className="flex items-center gap-3">
+                                                                        <div className={cn(
+                                                                            "w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold",
+                                                                            agent.avgScore >= 95 ? "bg-green-500/10 text-green-400" :
+                                                                                agent.avgScore >= 88 ? "bg-blue-500/10 text-blue-400" :
+                                                                                    "bg-amber-500/10 text-amber-400"
+                                                                        )}>
+                                                                            {agent.agentName?.substring(0, 2).toUpperCase() || 'AG'}
+                                                                        </div>
+                                                                        <span className="font-bold text-slate-200 text-sm">
+                                                                            {agent.agentName || 'Unknown Agent'}
+                                                                        </span>
+                                                                    </div>
+                                                                </td>
+                                                                <td className="py-3 px-4 text-center">
+                                                                    <span className="inline-flex items-center justify-center px-3 py-1 rounded-lg bg-white/5 border border-white/5">
+                                                                        <span className="text-sm font-black text-white tabular-nums">
+                                                                            {agent.auditCount || 0}
+                                                                        </span>
+                                                                    </span>
+                                                                </td>
+                                                                <td className="py-3 px-4 text-right">
+                                                                    <div className="flex items-center justify-end gap-2">
+                                                                        <div className="flex-1 max-w-[100px] h-2 bg-white/5 rounded-full overflow-hidden">
+                                                                            <motion.div
+                                                                                className={cn(
+                                                                                    "h-full rounded-full",
+                                                                                    agent.avgScore >= 95 ? "bg-gradient-to-r from-green-500 to-emerald-400" :
+                                                                                        agent.avgScore >= 88 ? "bg-gradient-to-r from-blue-500 to-cyan-400" :
+                                                                                            "bg-gradient-to-r from-amber-500 to-orange-400"
+                                                                                )}
+                                                                                initial={{ width: 0 }}
+                                                                                animate={{ width: `${agent.avgScore || 0}%` }}
+                                                                                transition={{ duration: 1, delay: idx * 0.05 }}
+                                                                            />
+                                                                        </div>
+                                                                        <span className={cn(
+                                                                            "text-lg font-black tabular-nums min-w-[60px] text-right",
+                                                                            agent.avgScore >= 95 ? "text-green-400" :
+                                                                                agent.avgScore >= 88 ? "text-blue-400" :
+                                                                                    "text-amber-400"
+                                                                        )}>
+                                                                            {agent.avgScore?.toFixed(1) || '0.0'}%
+                                                                        </span>
+                                                                    </div>
+                                                                </td>
+                                                            </motion.tr>
+                                                        ))
+                                                    ) : (
+                                                        <tr>
+                                                            <td colSpan={3} className="py-12 text-center">
+                                                                <div className="flex flex-col items-center gap-2">
+                                                                    <Users className="w-8 h-8 text-slate-600" />
+                                                                    <p className="text-sm text-slate-500 font-medium">No agent data available</p>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     </div>
-                                </div>
-                            </motion.div>
-                        </div>
+                                </motion.div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Critical Error Count - Flip Card */}
@@ -647,7 +680,7 @@ export default function DashboardPage() {
                                                                                                     "bg-slate-500/20 text-slate-400 border-slate-500/30 shadow-slate-500/10"
                                                                                     )}
                                                                                 >
-                                                                                    <span className="relative z-10">{userRole === 'AGENT' ? 'ZTP ACTIVE' : (pInfo.sanction?.startsWith('For ') ? `ZTP PROGRESSION: ${pInfo.sanction.replace('For ', '')}` : pInfo.sanction)}</span>
+                                                                                    <span className="relative z-10">{userRole === 'AGENT' ? 'ZTP ACTIVE' : (pInfo.sanction?.startsWith('For ') ? pInfo.sanction.replace('For ', '') : pInfo.sanction)}</span>
                                                                                     {pInfo.count >= 9 && (
                                                                                         <motion.span
                                                                                             animate={{ opacity: [0.1, 0.4, 0.1] }}

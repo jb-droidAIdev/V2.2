@@ -11,7 +11,7 @@ import {
     Save,
     Loader2
 } from 'lucide-react';
-import { CalibrationService } from '@/lib/calibration-service';
+import { CalibrationService } from '../../services/calibration-service';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 

@@ -23,19 +23,32 @@ import { motion, AnimatePresence } from 'framer-motion';
 import Image from 'next/image';
 
 const menuItems = [
-    { name: 'Dashboard', icon: LayoutDashboard, href: '/dashboard', roles: ['ADMIN', 'QA_TL', 'QA_MANAGER', 'OPS_TL', 'OPS_MANAGER', 'SDM', 'QA', 'AGENT'] },
-    { name: 'Dossier', icon: Users, href: '/dossier', roles: ['ADMIN', 'QA_TL', 'QA_MANAGER', 'OPS_TL', 'OPS_MANAGER', 'SDM', 'QA'] },
-    { name: 'Forms', icon: FileText, href: '/forms', roles: ['ADMIN', 'QA_TL', 'QA_MANAGER'] },
-    { name: 'Audits', icon: ClipboardCheck, href: '/audits', roles: ['ADMIN', 'QA_TL', 'QA_MANAGER', 'OPS_TL', 'OPS_MANAGER', 'SDM', 'QA', 'AGENT'] },
-    { name: 'Evaluate', icon: Zap, href: '/evaluate', roles: ['ADMIN', 'QA_TL', 'QA_MANAGER', 'QA'] },
-    { name: 'Calibration', icon: Target, href: '/calibration', roles: ['ADMIN', 'QA_TL', 'QA_MANAGER', 'QA', 'OPS_MANAGER', 'SDM', 'OPS_TL'] },
+    { name: 'Dashboard', icon: LayoutDashboard, href: '/dashboard', permission: 'PAGE_DASHBOARD' },
+    { name: 'Dossier', icon: Users, href: '/dossier', permission: 'PAGE_DOSSIER' },
+    { name: 'Forms', icon: FileText, href: '/forms', permission: 'PAGE_FORMS' },
+    { name: 'Audits', icon: ClipboardCheck, href: '/audits', permission: 'PAGE_AUDITS' },
+    { name: 'Evaluate', icon: Zap, href: '/evaluate', permission: 'PAGE_EVALUATE' },
+    { name: 'Calibration', icon: Target, href: '/calibration', permission: 'PAGE_CALIBRATION' },
 ];
+
+// Fallback Role Access Map (Polyfill for missing backend permissions)
+const ROLE_ACCESS_FALLBACK: Record<string, string[]> = {
+    'AGENT': ['PAGE_DASHBOARD', 'PAGE_AUDITS'], // Agents need access to Audits page to see their own
+    'QA': ['PAGE_DASHBOARD', 'PAGE_AUDITS', 'PAGE_EVALUATE'],
+    'QA_TL': ['PAGE_DASHBOARD', 'PAGE_DOSSIER', 'PAGE_AUDITS', 'PAGE_EVALUATE', 'PAGE_FORMS', 'PAGE_CALIBRATION'],
+    'OPS_TL': ['PAGE_DASHBOARD', 'PAGE_DOSSIER', 'PAGE_AUDITS'],
+    'QA_MANAGER': ['PAGE_DASHBOARD', 'PAGE_DOSSIER', 'PAGE_AUDITS', 'PAGE_EVALUATE', 'PAGE_FORMS', 'PAGE_CALIBRATION'],
+    'OPS_MANAGER': ['PAGE_DASHBOARD', 'PAGE_DOSSIER', 'PAGE_AUDITS'],
+    'SDM': ['PAGE_DASHBOARD', 'PAGE_DOSSIER', 'PAGE_AUDITS', 'PAGE_CALIBRATION'],
+    'ADMIN': ['PAGE_DASHBOARD', 'PAGE_DOSSIER', 'PAGE_AUDITS', 'PAGE_EVALUATE', 'PAGE_FORMS', 'PAGE_CALIBRATION', 'PAGE_ADMIN']
+};
 
 export default function Sidebar() {
     const pathname = usePathname();
     const router = useRouter();
     const [isHovered, setIsHovered] = useState(false);
     const [userRole, setUserRole] = useState<string>('');
+    const [permissions, setPermissions] = useState<string[]>([]);
     const [userName, setUserName] = useState<string>('');
 
     useEffect(() => {
@@ -45,6 +58,7 @@ export default function Sidebar() {
                 const user = JSON.parse(userStr);
                 setUserRole(user.role);
                 setUserName(user.name);
+                setPermissions(user.permissions || []);
             } catch (e) {
                 console.error('Failed to parse user data');
             }
@@ -112,7 +126,16 @@ export default function Sidebar() {
 
             <nav className="flex-1 px-4 space-y-1.5 mt-6 overflow-x-hidden">
                 {menuItems
-                    .filter(item => !item.roles || item.roles.includes(userRole))
+                    .filter(item => {
+                        // 1. Admin bypass
+                        if (userRole === 'ADMIN') return true;
+
+                        // 2. Check Explicit Permissions (Backend)
+                        const hasBackendPerm = !item.permission || permissions.includes(item.permission);
+                        if (hasBackendPerm) return true;
+
+                        return hasBackendPerm;
+                    })
                     .map((item) => {
                         const isActive = pathname === item.href;
                         return (

@@ -44,8 +44,17 @@ export class AuthService {
                     lastLoginAt: new Date()
                 });
 
-                const { password, ...result } = user;
-                return result;
+                const { password, userRole, customPermissions, ...userData } = user;
+
+                // Flatten permissions
+                const rolePerms = userRole?.permissions?.map((p: any) => p.permission.code) || [];
+                const userPerms = customPermissions?.map((p: any) => p.permission.code) || [];
+                const allPerms = Array.from(new Set([...rolePerms, ...userPerms]));
+
+                return {
+                    ...userData,
+                    permissions: allPerms
+                };
             }
         }
 

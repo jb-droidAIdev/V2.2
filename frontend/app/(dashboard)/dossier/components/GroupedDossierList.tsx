@@ -16,6 +16,7 @@ interface GroupedDossierListProps {
     onRemoveFromGroup: (id: string, name: string) => void;
     onManageCampaigns: (user: any) => void;
     userRole?: string;
+    permissions?: string[];
 }
 
 export default function GroupedDossierList({
@@ -28,7 +29,8 @@ export default function GroupedDossierList({
     onAddMemberToGroup,
     onRemoveFromGroup,
     onManageCampaigns,
-    userRole
+    userRole,
+    permissions = []
 }: GroupedDossierListProps) {
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
 
@@ -64,6 +66,7 @@ export default function GroupedDossierList({
                     onRemoveFromGroup={onRemoveFromGroup}
                     onManageCampaigns={onManageCampaigns}
                     userRole={userRole}
+                    permissions={permissions}
                     defaultOpen={false}
                     isMenuOpen={activeMenu === team}
                     onToggleMenu={() => setActiveMenu(activeMenu === team ? null : team)}
@@ -86,6 +89,7 @@ function CollapsibleGroup({
     onRemoveFromGroup,
     onManageCampaigns,
     userRole,
+    permissions = [],
     defaultOpen,
     isMenuOpen,
     onToggleMenu,
@@ -135,7 +139,7 @@ function CollapsibleGroup({
 
                 <div className="flex items-center gap-4">
                     {/* Folder Options Menu - ADMIN ONLY */}
-                    {title !== 'Unassigned' && ['ADMIN', 'QA_TL', 'QA_MANAGER'].includes(userRole || '') && (
+                    {title !== 'Unassigned' && (permissions.includes('CAMPAIGN_MANAGE') || userRole === 'ADMIN') && (
                         <div className="relative" ref={menuRef}>
                             <button
                                 onClick={(e) => { e.stopPropagation(); onToggleMenu(); }}
@@ -205,6 +209,7 @@ function CollapsibleGroup({
                             onRemoveFromGroup={onRemoveFromGroup}
                             onManageCampaigns={onManageCampaigns}
                             userRole={userRole}
+                            permissions={permissions}
                         />
                     </motion.div>
                 )}

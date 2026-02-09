@@ -135,7 +135,7 @@ export default function AuditPreviewModal({
                                         else if (count === 6) label = 'FINAL WRITTEN WARNING';
                                         else if (count === 3) label = 'WRITTEN WARNING';
 
-                                        return label ? `ZTP PROGRESSION: ${label}` : null;
+                                        return label ? label : null;
                                     };
 
                                     return (

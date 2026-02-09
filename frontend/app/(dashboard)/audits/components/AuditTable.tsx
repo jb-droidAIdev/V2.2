@@ -11,6 +11,7 @@ interface AuditTableProps {
     onPreview: (id: string) => void;
     onDelete: (audit: any) => void;
     isLoadingPreview: boolean;
+    permissions: string[];
 }
 
 export default function AuditTable({
@@ -19,7 +20,8 @@ export default function AuditTable({
     userRole,
     onPreview,
     onDelete,
-    isLoadingPreview
+    isLoadingPreview,
+    permissions = []
 }: AuditTableProps) {
     return (
         <div className="bg-[#0f172a]/40 border border-white/10 rounded-3xl overflow-hidden backdrop-blur-xl shadow-2xl min-h-[400px]">
@@ -128,7 +130,7 @@ export default function AuditTable({
                                             >
                                                 {isLoadingPreview ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
                                             </button>
-                                            {userRole === 'ADMIN' && (
+                                            {(userRole === 'ADMIN' || permissions.includes('AUDIT_DELETE')) && (
                                                 <button
                                                     onClick={() => onDelete(audit)}
                                                     className="p-1.5 hover:bg-rose-500/10 text-rose-400 rounded-lg transition-colors"

@@ -22,9 +22,9 @@ import {
     GetMyCalibrationTasksDto,
 } from './dto/calibration.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { PermissionsGuard } from '../auth/permissions.guard';
-import { Permissions } from '../auth/permissions.decorator';
-import { Permission } from '../auth/permissions.service';
+import { PermissionsGuard } from '../auth/permissions/permissions.guard';
+import { Permissions } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permissions.service';
 
 @Controller('calibration')
 @UseGuards(JwtAuthGuard, PermissionsGuard)

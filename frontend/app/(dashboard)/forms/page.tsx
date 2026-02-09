@@ -81,14 +81,23 @@ export default function FormsPage() {
     });
 
     const [userRole, setUserRole] = useState<string>('');
+    const [permissions, setPermissions] = useState<string[]>([]);
 
     useEffect(() => {
         const user = localStorage.getItem('user');
         if (user) {
-            setUserRole(JSON.parse(user).role);
+            const userData = JSON.parse(user);
+            setUserRole(userData.role);
+            setPermissions(userData.permissions || []);
         }
         fetchData();
     }, []);
+
+    useEffect(() => {
+        if (!isLoading && !permissions.includes('PAGE_FORMS') && userRole !== 'ADMIN') {
+            router.push('/dashboard');
+        }
+    }, [isLoading, permissions, userRole, router]);
 
     const fetchData = async (silent = false) => {
         if (!silent) setIsLoading(true);
@@ -237,8 +246,9 @@ export default function FormsPage() {
         );
     }
 
-    if (!['ADMIN', 'QA_TL', 'QA_MANAGER'].includes(userRole)) {
-        router.push('/dashboard');
+
+
+    if (!isLoading && !permissions.includes('PAGE_FORMS') && userRole !== 'ADMIN') {
         return null;
     }
 

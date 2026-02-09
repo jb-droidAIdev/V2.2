@@ -36,6 +36,7 @@ export default function EvaluatePage() {
     const [isStarting, setIsStarting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [userRole, setUserRole] = useState<string>('');
+    const [permissions, setPermissions] = useState<string[]>([]);
 
     useEffect(() => {
         fetchAssignedCampaigns();
@@ -44,8 +45,15 @@ export default function EvaluatePage() {
         if (user) {
             const userData = JSON.parse(user);
             setUserRole(userData.role);
+            setPermissions(userData.permissions || []);
         }
     }, []);
+
+    useEffect(() => {
+        if (!isLoading && !permissions.includes('PAGE_EVALUATE')) {
+            router.push('/dashboard');
+        }
+    }, [isLoading, permissions, router]);
 
     const fetchAssignedCampaigns = async () => {
         try {
@@ -96,8 +104,9 @@ export default function EvaluatePage() {
         );
     }
 
-    if (userRole === 'AGENT') {
-        router.push('/dashboard');
+
+
+    if (!isLoading && !permissions.includes('PAGE_EVALUATE')) {
         return null;
     }
 

@@ -19,6 +19,7 @@ export default function AuditsPage() {
     const [searchTerm, setSearchTerm] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [userRole, setUserRole] = useState<string>('');
+    const [permissions, setPermissions] = useState<string[]>([]);
     const [deleteTarget, setDeleteTarget] = useState<any>(null);
     const [previewTarget, setPreviewTarget] = useState<any>(null);
     const [isLoadingPreview, setIsLoadingPreview] = useState(false);
@@ -72,6 +73,7 @@ export default function AuditsPage() {
         if (user) {
             const userData = JSON.parse(user);
             setUserRole(userData.role);
+            setPermissions(userData.permissions || []);
         }
         fetchAudits();
     }, []);
@@ -334,6 +336,7 @@ export default function AuditsPage() {
                 onPreview={handlePreviewAudit}
                 onDelete={onDeleteAudit}
                 isLoadingPreview={isLoadingPreview}
+                permissions={permissions}
             />
 
             <AuditPreviewModal

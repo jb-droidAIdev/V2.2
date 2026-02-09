@@ -9,9 +9,10 @@ interface DossierTableProps {
     onRemoveFromGroup: (id: string, name: string) => void;
     onManageCampaigns: (user: any) => void;
     userRole?: string;
+    permissions?: string[];
 }
 
-export default function DossierTable({ users, onDelete, onEdit, onRemoveFromGroup, onManageCampaigns, userRole }: DossierTableProps) {
+export default function DossierTable({ users, onDelete, onEdit, onRemoveFromGroup, onManageCampaigns, userRole, permissions = [] }: DossierTableProps) {
     if (users.length === 0) {
         return (
             <div className="p-8 text-center text-slate-500 italic">
@@ -20,7 +21,7 @@ export default function DossierTable({ users, onDelete, onEdit, onRemoveFromGrou
         );
     }
 
-    const isAdmin = ['ADMIN', 'QA_TL', 'QA_MANAGER'].includes(userRole || '');
+    const canManageUsers = permissions.includes('USER_MANAGE') || userRole === 'ADMIN';
 
     return (
         <div className="overflow-x-auto no-scrollbar">
@@ -33,7 +34,7 @@ export default function DossierTable({ users, onDelete, onEdit, onRemoveFromGrou
                         <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Team</th>
                         <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Project</th>
                         <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Reports To</th>
-                        {isAdmin && <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest text-center">Actions</th>}
+                        {canManageUsers && <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest text-center">Actions</th>}
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
@@ -84,7 +85,7 @@ export default function DossierTable({ users, onDelete, onEdit, onRemoveFromGrou
                                     </div>
                                 ) : 'N/A'}
                             </td>
-                            {isAdmin && (
+                            {canManageUsers && (
                                 <td className="px-6 py-3.5">
                                     <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <button

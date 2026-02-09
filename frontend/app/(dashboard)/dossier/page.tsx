@@ -19,6 +19,7 @@ import { toast } from 'sonner';
 import GroupedDossierList from './components/GroupedDossierList';
 import CreateGroupModal from './components/CreateGroupModal';
 import UserFormModal from './components/UserFormModal';
+import RoleManagerModal from './components/RoleManagerModal';
 import AssignMemberModal from './components/AssignMemberModal';
 import UserCampaignsModal from './components/UserCampaignsModal';
 import ConfirmModal from '@/components/modals/ConfirmModal';
@@ -33,11 +34,13 @@ export default function DossierPage() {
     const [renamingGroup, setRenamingGroup] = useState<{ id: string | null, name: string } | null>(null);
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState<any>(null);
+    const [isRoleManagerOpen, setIsRoleManagerOpen] = useState(false);
     const [viewMode, setViewMode] = useState<'admin' | 'users'>('users');
     const [isAssignMemberModalOpen, setIsAssignMemberModalOpen] = useState(false);
     const [targetGroup, setTargetGroup] = useState<string>('');
     const [campaignModalUser, setCampaignModalUser] = useState<any>(null);
     const [userRole, setUserRole] = useState<string>('');
+    const [permissions, setPermissions] = useState<string[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [confirmConfig, setConfirmConfig] = useState<{
         isOpen: boolean;
@@ -58,6 +61,7 @@ export default function DossierPage() {
             try {
                 const u = JSON.parse(userStr);
                 setUserRole(u.role);
+                setPermissions(u.permissions || []);
             } catch (e) {
                 console.error('Failed to parse user', e);
             }
@@ -177,7 +181,7 @@ export default function DossierPage() {
         setIsUserModalOpen(true);
     };
 
-    const handleUserSubmit = async (data: any) => {
+    const handleSaveUser = async (data: any) => {
         try {
             if (editingUser) {
                 await api.patch(`/users/${editingUser.id}`, data);
@@ -346,7 +350,7 @@ export default function DossierPage() {
                     </div>
 
                     <div className="flex items-center gap-3">
-                        {['ADMIN', 'QA_TL', 'QA_MANAGER'].includes(userRole) && (
+                        {(permissions.includes('CAMPAIGN_MANAGE') || userRole === 'ADMIN') && (
                             <div className="flex items-center gap-2">
                                 <button
                                     onClick={() => setIsCreatingGroup(true)}
@@ -355,7 +359,11 @@ export default function DossierPage() {
                                     <Layers className="w-5 h-5 text-blue-400" />
                                     <span>Create Folder</span>
                                 </button>
+                            </div>
+                        )}
 
+                        {(permissions.includes('USER_MANAGE') || userRole === 'ADMIN') && (
+                            <div className="flex items-center gap-2">
                                 <button
                                     onClick={handleImportClick}
                                     disabled={isImporting}
@@ -382,6 +390,14 @@ export default function DossierPage() {
                                 >
                                     <UserPlus className="w-5 h-5" />
                                     <span>Add Employee</span>
+                                </button>
+
+                                <button
+                                    onClick={() => setIsRoleManagerOpen(true)}
+                                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-indigo-600/20 active:scale-95 border border-indigo-400/20"
+                                >
+                                    <ShieldCheck className="w-5 h-5" />
+                                    <span>Manage Roles</span>
                                 </button>
                             </div>
                         )}
@@ -445,6 +461,7 @@ export default function DossierPage() {
                         return c.type === targetType || (!c.type && targetType === 'USER');
                     })}
                     userRole={userRole}
+                    permissions={permissions}
                     onDelete={handleDelete}
                     onEdit={handleEditUser}
                     onRenameGroup={handleRenameGroupClick}
@@ -494,19 +511,25 @@ export default function DossierPage() {
                         .sort()}
                 />
 
-                <UserFormModal
-                    isOpen={isUserModalOpen}
-                    onClose={() => setIsUserModalOpen(false)}
-                    onSubmit={handleUserSubmit}
-                    initialData={editingUser}
-                    viewMode={viewMode}
-                    campaigns={campaigns
-                        .filter(c => {
-                            const targetType = viewMode === 'admin' ? 'ADMIN' : 'USER';
-                            return c.type === targetType || (!c.type && targetType === 'USER');
-                        })
-                        .map(c => c.name)}
-                />
+
+                {isUserModalOpen && (
+                    <UserFormModal
+                        isOpen={isUserModalOpen}
+                        onClose={() => {
+                            setIsUserModalOpen(false);
+                            setEditingUser(null);
+                        }}
+                        onSubmit={handleSaveUser}
+                        initialData={editingUser}
+                        viewMode={viewMode}
+                        campaigns={campaigns
+                            .filter(c => {
+                                const targetType = viewMode === 'admin' ? 'ADMIN' : 'USER';
+                                return c.type === targetType || (!c.type && targetType === 'USER');
+                            })
+                            .map(c => c.name)}
+                    />
+                )}
 
                 <AssignMemberModal
                     isOpen={isAssignMemberModalOpen}
@@ -536,6 +559,11 @@ export default function DossierPage() {
                                 isImplicit: true
                             }))
                     ].sort((a, b) => a.name.localeCompare(b.name))}
+                />
+
+                <RoleManagerModal
+                    isOpen={isRoleManagerOpen}
+                    onClose={() => setIsRoleManagerOpen(false)}
                 />
 
                 <ConfirmModal

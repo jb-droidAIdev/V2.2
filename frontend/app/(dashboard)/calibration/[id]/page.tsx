@@ -19,7 +19,7 @@ import {
     Activity,
     Loader2
 } from 'lucide-react';
-import { CalibrationService, CalibrationSession } from '@/lib/calibration-service';
+import { CalibrationService, CalibrationSession } from '../services/calibration-service';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';

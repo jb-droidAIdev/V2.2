@@ -81,6 +81,18 @@ export class FormsController {
     }
 
     @UseGuards(AuthGuard('jwt'))
+    @Get(':id/assigned-qas')
+    getAssignedQAs(@Param('id') id: string) {
+        return this.formsService.getAssignedQAs(id);
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Post(':id/assign-qas')
+    assignQAs(@Param('id') id: string, @Body('userIds') userIds: string[]) {
+        return this.formsService.assignQAs(id, userIds);
+    }
+
+    @UseGuards(AuthGuard('jwt'))
     @Post(':id/duplicate')
     duplicate(@Param('id') id: string, @Body() body: any, @Req() req: any) {
         return this.formsService.duplicate(id, body, req.user.id);

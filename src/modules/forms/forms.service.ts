@@ -67,7 +67,22 @@ export class FormsService {
         return this.prisma.monitoringForm.findUnique({
             where: { id },
             include: {
-                campaign: true,
+                campaign: {
+                    include: {
+                        qaAssignments: {
+                            include: {
+                                user: {
+                                    select: {
+                                        id: true,
+                                        name: true,
+                                        email: true,
+                                        role: true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
                 versions: {
                     where: { isActive: true },
                     include: { criteria: true },
@@ -77,7 +92,110 @@ export class FormsService {
         });
     }
 
-    async create(data: { campaignId?: string; teamName: string; name: string; description?: string }) {
+    async getAssignedQAs(formId: string) {
+        const form = await this.prisma.monitoringForm.findUnique({
+            where: { id: formId },
+            select: { campaignId: true, teamName: true }
+        });
+
+        if (!form) throw new BadRequestException('Form not found');
+
+        let campaignId = form.campaignId;
+
+        // Fallback to name-based lookup if no explicit campaignId
+        if (!campaignId && form.teamName) {
+            const campaign = await this.prisma.campaign.findFirst({
+                where: { name: form.teamName, isActive: true }
+            });
+            campaignId = campaign?.id;
+        }
+
+        if (!campaignId) return [];
+
+        const assignments = await this.prisma.campaignQA.findMany({
+            where: { campaignId },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        role: true,
+                        eid: true
+                    }
+                }
+            }
+        });
+
+        return assignments.map(a => a.user);
+    }
+
+    async assignQAs(formId: string, userIds: string[]) {
+        const form = await this.prisma.monitoringForm.findUnique({
+            where: { id: formId },
+            select: { campaignId: true, teamName: true, name: true }
+        });
+
+        if (!form) throw new BadRequestException('Form not found');
+
+        let campaignId = form.campaignId;
+
+        // 1. Resolve or Create Campaign
+        if (!campaignId && form.teamName) {
+            const existingCampaign = await this.prisma.campaign.findFirst({
+                where: { name: form.teamName, isActive: true }
+            });
+
+            if (existingCampaign) {
+                campaignId = existingCampaign.id;
+                // Update form to link to this campaign
+                await this.prisma.monitoringForm.update({
+                    where: { id: formId },
+                    data: { campaignId }
+                });
+            } else {
+                // Auto-create a campaign to anchor this form
+                const newCampaign = await this.prisma.campaign.create({
+                    data: {
+                        name: form.teamName,
+                        type: 'USER',
+                        isActive: true
+                    }
+                });
+                campaignId = newCampaign.id;
+                await this.prisma.monitoringForm.update({
+                    where: { id: formId },
+                    data: { campaignId }
+                });
+            }
+        }
+
+        if (!campaignId) {
+            throw new BadRequestException('Could not resolve campaign for this form assignment.');
+        }
+
+        // 2. Sync Assignments
+        return this.prisma.$transaction(async (tx) => {
+            // Remove existing
+            await tx.campaignQA.deleteMany({
+                where: { campaignId }
+            });
+
+            // Add new
+            if (userIds.length > 0) {
+                await tx.campaignQA.createMany({
+                    data: userIds.map(userId => ({
+                        campaignId: campaignId as string,
+                        userId
+                    }))
+                });
+            }
+
+            return { success: true, count: userIds.length };
+        });
+    }
+
+    async create(data: { campaignId?: string; teamName: string; name: string; description?: string; assignedUserIds?: string[] }) {
         if (!data.name?.trim()) throw new Error('Form name is required');
 
         let targetCampaignId = data.campaignId;
@@ -112,14 +230,33 @@ export class FormsService {
             }
         }
 
-        return this.prisma.monitoringForm.create({
-            data: {
-                name: data.name,
-                teamName: data.teamName,
-                campaignId: targetCampaignId,
-                description: data.description,
-                isConfigured: false
+        return this.prisma.$transaction(async (tx) => {
+            const form = await tx.monitoringForm.create({
+                data: {
+                    name: data.name,
+                    teamName: data.teamName,
+                    campaignId: targetCampaignId,
+                    description: data.description,
+                    isConfigured: false
+                }
+            });
+
+            // If QA assignments provided, sync them to the campaign
+            if (targetCampaignId && data.assignedUserIds && data.assignedUserIds.length > 0) {
+                // Clear existing just in case (though it should be a new campaign or no assignments yet)
+                await tx.campaignQA.deleteMany({
+                    where: { campaignId: targetCampaignId }
+                });
+
+                await tx.campaignQA.createMany({
+                    data: data.assignedUserIds.map(userId => ({
+                        campaignId: targetCampaignId as string,
+                        userId
+                    }))
+                });
             }
+
+            return form;
         });
     }
 

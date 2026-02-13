@@ -11,8 +11,8 @@ export class FormsController {
 
     @UseGuards(AuthGuard('jwt'))
     @Get()
-    findAll() {
-        return this.formsService.findAll();
+    findAll(@Query('archived') archived?: string) {
+        return this.formsService.findAll(archived === 'true');
     }
 
     @UseGuards(AuthGuard('jwt'))

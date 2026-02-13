@@ -5,9 +5,9 @@ import { PrismaService } from '../../prisma.service';
 export class FormsService {
     constructor(private prisma: PrismaService) { }
 
-    async findAll() {
+    async findAll(archived: boolean = false) {
         const forms = await this.prisma.monitoringForm.findMany({
-            where: { isArchived: false },
+            where: { isArchived: archived },
             include: {
                 campaign: true,
                 versions: {

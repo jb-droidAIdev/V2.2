@@ -397,7 +397,7 @@ async function main() {
       teamName: 'Customer Support Quality', // Match campaign name for team-based lookup
       name: 'Standard Support Rubric',
       description: 'Standard evaluation form for quality assessment',
-      isArchived: false
+      isArchived: false // Explicitly ensure it's not archived
     }
   });
 
@@ -466,8 +466,17 @@ async function main() {
   });
   console.log('✅ Created sample audit data');
 
+  console.log('\n📋 Summary:');
+  console.log(`   - ${permissions.length} permissions`);
+  console.log(`   - ${roles.length} roles`);
+  console.log(`   - ${agentData.length + 1} users (including admin)`);
+  console.log(`   - 1 campaign with sample data`);
+  console.log('\n🔑 Login credentials:');
+  console.log(`   Email: ${email}`);
+  console.log(`   Password: ${password}`);
   console.log('\n🎉 Comprehensive seed completed successfully!');
 }
+
 
 main()
   .catch((e) => {

@@ -9,7 +9,7 @@ async function main() {
   // ==================== RBAC SEEDING ====================
   console.log('📝 Step 1: Creating permissions...');
 
-  // Define all permissions
+  // Define all permissions (both action-based and page-based for frontend/backend compatibility)
   const permissions = [
     // User Management
     { code: 'USER_VIEW', description: 'View users', module: 'Users' },
@@ -466,7 +466,6 @@ async function main() {
   });
   console.log('✅ Created sample audit data');
 
-  console.log('\n🎉 Comprehensive seed completed successfully!');
   console.log('\n📋 Summary:');
   console.log(`   - ${permissions.length} permissions`);
   console.log(`   - ${roles.length} roles`);
@@ -475,7 +474,9 @@ async function main() {
   console.log('\n🔑 Login credentials:');
   console.log(`   Email: ${email}`);
   console.log(`   Password: ${password}`);
+  console.log('\n🎉 Comprehensive seed completed successfully!');
 }
+
 
 main()
   .catch((e) => {

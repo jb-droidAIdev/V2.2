@@ -11,8 +11,8 @@ export class FormsController {
 
     @UseGuards(AuthGuard('jwt'))
     @Get()
-    findAll() {
-        return this.formsService.findAll();
+    findAll(@Query('archived') archived?: string) {
+        return this.formsService.findAll(archived === 'true');
     }
 
     @UseGuards(AuthGuard('jwt'))
@@ -78,6 +78,18 @@ export class FormsController {
     @Delete(':id')
     remove(@Param('id') id: string) {
         return this.formsService.remove(id);
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Get(':id/assigned-qas')
+    getAssignedQAs(@Param('id') id: string) {
+        return this.formsService.getAssignedQAs(id);
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Post(':id/assign-qas')
+    assignQAs(@Param('id') id: string, @Body('userIds') userIds: string[]) {
+        return this.formsService.assignQAs(id, userIds);
     }
 
     @UseGuards(AuthGuard('jwt'))

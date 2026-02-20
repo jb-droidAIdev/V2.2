@@ -91,9 +91,9 @@ export class UsersController {
 
     @UseGuards(AuthGuard('jwt'))
     @Permissions(Permission.USER_MANAGE)
-    @Delete(':id')
-    async remove(@Param('id') id: string) {
-        return this.usersService.remove(id);
+    @Post(':id/reset-password')
+    async resetPassword(@Param('id') id: string) {
+        return this.usersService.resetToDefaultPassword(id);
     }
 
 }

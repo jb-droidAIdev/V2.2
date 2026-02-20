@@ -7,29 +7,34 @@ export class CampaignsService {
     constructor(private prisma: PrismaService) { }
 
     async findAll(user?: any) {
-        let where: any = { isActive: true };
+        try {
+            let where: any = { isActive: true };
 
-        if (user) {
-            const role = String(user.role || '').toUpperCase();
-            const isSuperAdmin = ['ADMIN', 'QA_MANAGER'].includes(role);
+            if (user) {
+                const role = String(user.role || '').toUpperCase();
+                const isSuperAdmin = ['ADMIN', 'QA_MANAGER'].includes(role);
 
-            if (!isSuperAdmin) {
-                // Restricted managers see their assignments + ADMIN folders
-                where.OR = [
-                    { qaAssignments: { some: { userId: user.id } } },
-                    { type: 'ADMIN' }
-                ];
-            }
-        }
-
-        return this.prisma.campaign.findMany({
-            where,
-            include: {
-                _count: {
-                    select: { qaAssignments: true, forms: true }
+                if (!isSuperAdmin) {
+                    // Restricted managers see their assignments + ADMIN folders
+                    where.OR = [
+                        { qaAssignments: { some: { userId: user.id } } },
+                        { type: 'ADMIN' }
+                    ];
                 }
             }
-        });
+
+            return await this.prisma.campaign.findMany({
+                where,
+                include: {
+                    _count: {
+                        select: { qaAssignments: true, forms: true }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('CampaignsService.findAll Error:', error);
+            throw error;
+        }
     }
 
     async findAssigned(userId: string) {

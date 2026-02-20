@@ -52,43 +52,55 @@ export class UsersService {
     }
 
     async findAll(user?: any) {
-        let where: any = { isActive: true };
+        try {
+            console.log('UsersService.findAll initiated by:', user?.email, 'Role:', user?.role);
+            let where: any = { isActive: true };
 
-        // RBAC: TLs see their own team + any campaign they are assigned to
-        if (user && [Role.QA, Role.QA_TL, Role.QA_MANAGER, Role.OPS_TL, Role.OPS_MANAGER, Role.SDM].includes(user.role)) {
-            const assignments = await this.prisma.campaignQA.findMany({
-                where: { userId: user.id },
-                include: { campaign: true }
+            const userRoleStr = String(user?.role || '').toUpperCase();
+            const isManagerOrQA = ['QA', 'QA_TL', 'QA_MANAGER', 'OPS_TL', 'OPS_MANAGER', 'SDM'].includes(userRoleStr);
+
+            // RBAC: TLs see their own team + any campaign they are assigned to
+            if (user && isManagerOrQA && userRoleStr !== 'ADMIN') {
+                console.log('Applying filters for Manager/QA role');
+                const assignments = await this.prisma.campaignQA.findMany({
+                    where: { userId: user.id },
+                    include: { campaign: true }
+                });
+                const campaignNames = assignments.map(a => a.campaign.name);
+
+                where.OR = [
+                    { employeeTeam: user.employeeTeam },
+                    { employeeTeam: { in: campaignNames } },
+                    { role: { in: ['QA', 'QA_TL'] } } // Allow seeing the QA staff folder in Dossier
+                ];
+            }
+
+            const results = await this.prisma.user.findMany({
+                where,
+                select: {
+                    id: true,
+                    email: true,
+                    name: true,
+                    role: true,
+                    eid: true,
+                    systemId: true,
+                    billable: true,
+                    employeeTeam: true,
+                    projectCode: true,
+                    supervisor: true,
+                    manager: true,
+                    sdm: true,
+                    isActive: true,
+                    createdAt: true,
+                },
+                orderBy: { name: 'asc' }
             });
-            const campaignNames = assignments.map(a => a.campaign.name);
-
-            where.OR = [
-                { employeeTeam: user.employeeTeam },
-                { employeeTeam: { in: campaignNames } },
-                { role: { in: [Role.QA, Role.QA_TL] } } // Allow seeing the QA staff folder in Dossier
-            ];
+            console.log(`UsersService.findAll returning ${results.length} users`);
+            return results;
+        } catch (error) {
+            console.error('CRITICAL: UsersService.findAll Error:', error);
+            throw error;
         }
-
-        return this.prisma.user.findMany({
-            where,
-            select: {
-                id: true,
-                email: true,
-                name: true,
-                role: true,
-                eid: true,
-                systemId: true,
-                billable: true,
-                employeeTeam: true,
-                projectCode: true,
-                supervisor: true,
-                manager: true,
-                sdm: true,
-                isActive: true,
-                createdAt: true,
-            },
-            orderBy: { name: 'asc' }
-        });
     }
 
     async findByTeam(teamName: string, requestingUserId?: string) {
@@ -116,7 +128,8 @@ export class UsersService {
 
     async create(data: any) {
         const { password, ...userData } = data;
-        const hashedPassword = await bcrypt.hash(password || 'Standard123!', 10);
+        const defaultPassword = `Fws@${userData.eid || '12345'}`;
+        const hashedPassword = await bcrypt.hash(password || defaultPassword, 10);
 
         // Dynamic RBAC: Get Role ID
         const targetRole = userData.role || 'AGENT';
@@ -195,7 +208,8 @@ export class UsersService {
                     });
                 } else {
                     // CREATE NEW
-                    const defaultPassword = await bcrypt.hash('Standard123!', 10);
+                    const defaultPassStr = `Fws@${u.eid ? String(u.eid).trim() : '12345'}`;
+                    const defaultPassword = await bcrypt.hash(defaultPassStr, 10);
                     await this.prisma.user.create({
                         data: {
                             ...userData,
@@ -258,7 +272,23 @@ export class UsersService {
             data: {
                 password: hashedPassword,
                 mustChangePassword: false
-            } as any
+            }
+        });
+    }
+
+    async resetToDefaultPassword(id: string) {
+        const user = await this.prisma.user.findUnique({ where: { id } });
+        if (!user) throw new Error('User not found');
+
+        const defaultPassword = `Fws@${user.eid || '12345'}`;
+        const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+
+        return this.prisma.user.update({
+            where: { id },
+            data: {
+                password: hashedPassword,
+                mustChangePassword: true
+            }
         });
     }
 

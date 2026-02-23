@@ -5,7 +5,7 @@ import { ErrorLoggingInterceptor } from './common/interceptors/error-logging.int
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.setGlobalPrefix('api');
+  // app.setGlobalPrefix('api');
   app.enableCors({
     origin: process.env.FRONTEND_URL,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
@@ -17,16 +17,16 @@ async function bootstrap() {
   app.use(urlencoded({ limit: '50mb', extended: true }));
 
   // Request Logging
-  app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-    res.on('finish', () => {
-      console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} -> ${res.statusCode}`);
-    });
-    next();
-  });
+  // app.use((req, res, next) => {
+  //   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  //   res.on('finish', () => {
+  //     console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} -> ${res.statusCode}`);
+  //   });
+  //   next();
+  // });
 
-  // Global Error Logging
-  app.useGlobalInterceptors(new ErrorLoggingInterceptor());
+  // // Global Error Logging
+  // app.useGlobalInterceptors(new ErrorLoggingInterceptor());
 
   const port = process.env.PORT ?? 4000;
   await app.listen(port);

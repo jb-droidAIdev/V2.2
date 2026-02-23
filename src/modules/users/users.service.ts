@@ -305,6 +305,14 @@ export class UsersService {
         });
     }
 
+    // Scoped update — only sets employeeTeam, used by CAMPAIGN_MANAGE endpoints
+    async assignUsersToTeam(userIds: string[], teamName: string) {
+        return this.prisma.user.updateMany({
+            where: { id: { in: userIds } },
+            data: { employeeTeam: teamName }
+        });
+    }
+
     async updateUser(id: string, data: any) {
         // If role is being updated, we must update the roleId mapping
         let updateData = { ...data };
@@ -314,6 +322,16 @@ export class UsersService {
             if (userRole) {
                 updateData.roleId = userRole.id;
             }
+        }
+
+        // Handle password update if provided
+        if (data.password && data.password.trim() !== "") {
+            updateData.password = await bcrypt.hash(data.password, 10);
+            // Default to forcing a change if set via general update (admin action)
+            updateData.mustChangePassword = data.mustChangePassword ?? true;
+        } else {
+            // Remove empty password from update to avoid overwriting with empty string
+            delete updateData.password;
         }
 
         return this.prisma.user.update({

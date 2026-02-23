@@ -1,14 +1,11 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { json, urlencoded } from 'express';
-
-// Check for required env vars early
-if (!process.env.GEMINI_API_KEY) {
-  console.warn('WARNING: GEMINI_API_KEY is not set in the environment.');
-}
+import { ErrorLoggingInterceptor } from './common/interceptors/error-logging.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  app.setGlobalPrefix('api');
   app.enableCors({
     origin: process.env.FRONTEND_URL,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
@@ -18,6 +15,18 @@ async function bootstrap() {
   // Increase payload limits for large bulk uploads
   app.use(json({ limit: '50mb' }));
   app.use(urlencoded({ limit: '50mb', extended: true }));
+
+  // Request Logging
+  app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    res.on('finish', () => {
+      console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} -> ${res.statusCode}`);
+    });
+    next();
+  });
+
+  // Global Error Logging
+  app.useGlobalInterceptors(new ErrorLoggingInterceptor());
 
   const port = process.env.PORT ?? 4000;
   await app.listen(port);

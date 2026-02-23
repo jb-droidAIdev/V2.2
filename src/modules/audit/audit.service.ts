@@ -480,15 +480,6 @@ export class AuditService {
     }
 
     async findOne(id: string, userId?: string) {
-        if (userId) {
-            // Record view
-            await (this.prisma as any).auditUserView.upsert({
-                where: { auditId_userId: { auditId: id, userId } },
-                create: { auditId: id, userId },
-                update: { viewedAt: new Date() }
-            });
-        }
-
         const audit = await this.prisma.audit.findUnique({
             where: { id },
             include: {
@@ -515,6 +506,20 @@ export class AuditService {
         });
 
         if (!audit) throw new NotFoundException('Audit not found');
+
+        if (userId) {
+            // Record view safely after confirming existence
+            try {
+                await (this.prisma as any).auditUserView.upsert({
+                    where: { auditId_userId: { auditId: id, userId } },
+                    create: { auditId: id, userId },
+                    update: { viewedAt: new Date() }
+                });
+            } catch (e) {
+                // Ignore view tracking errors to prevent blocking the read
+                console.warn('Failed to track audit view:', e);
+            }
+        }
 
         // ENRICHMENT: Calculate ZTP Milestones for the preview
         const enrichedScores = await Promise.all(audit.scores.map(async (score) => {
@@ -719,6 +724,12 @@ export class AuditService {
         // Delete related records first to ensure referential integrity
         await this.prisma.auditScore.deleteMany({ where: { auditId: id } });
         await this.prisma.auditFieldValue.deleteMany({ where: { auditId: id } });
+        try {
+            // Delete view records if they exist (requires explicit delete due to lack of cascade)
+            await (this.prisma as any).auditUserView.deleteMany({ where: { auditId: id } });
+        } catch (e) {
+            console.warn('Failed to cleanup audit views (schema mismatch?):', e);
+        }
 
         return this.prisma.audit.delete({
             where: { id }

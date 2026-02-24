@@ -65,6 +65,7 @@ export enum Permission {
 
     // User/System Permissions
     USER_MANAGE = 'USER_MANAGE',
+    USER_RESET_PASSWORD = 'USER_RESET_PASSWORD',
     CAMPAIGN_MANAGE = 'CAMPAIGN_MANAGE',
     DASHBOARD_VIEW = 'DASHBOARD_VIEW',
 

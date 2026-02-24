@@ -40,6 +40,7 @@ export class PermissionsGuard implements CanActivate {
             return true;
         }
 
-        return requiredPermissions.every((permission) => userPermissions.includes(permission));
+        // OR logic: user needs at least ONE of the listed permissions (not all of them)
+        return requiredPermissions.some((permission) => userPermissions.includes(permission));
     }
 }

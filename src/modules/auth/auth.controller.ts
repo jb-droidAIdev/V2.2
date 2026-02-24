@@ -22,7 +22,10 @@ export class AuthController {
     @UseGuards(AuthGuard('jwt'))
     @Get('me')
     getProfile(@Request() req: any) {
-        return req.user;
+        // req.user is populated by JwtStrategy.validate() which fetches fresh
+        // permissions from the DB on every request — always up-to-date
+        const { password, ...safeUser } = req.user;
+        return safeUser;
     }
 
     @UseGuards(AuthGuard('jwt'))

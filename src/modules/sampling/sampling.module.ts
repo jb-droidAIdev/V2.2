@@ -3,7 +3,7 @@ import { SamplingService } from './sampling.service';
 import { PrismaService } from '../../prisma.service';
 
 @Module({
-    providers: [SamplingService],
-    exports: [SamplingService],
+  providers: [SamplingService],
+  exports: [SamplingService],
 })
-export class SamplingModule { }
+export class SamplingModule {}

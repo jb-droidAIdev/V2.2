@@ -3,7 +3,7 @@ import { SlaEngineService } from './sla-engine.service';
 import { PrismaService } from '../../prisma.service';
 
 @Module({
-    providers: [SlaEngineService],
-    exports: [SlaEngineService],
+  providers: [SlaEngineService],
+  exports: [SlaEngineService],
 })
-export class SlaEngineModule { }
+export class SlaEngineModule {}

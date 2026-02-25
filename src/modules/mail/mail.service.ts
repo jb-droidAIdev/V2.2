@@ -18,7 +18,13 @@ export class MailService {
     });
   }
 
-  async sendMail(to: string | string[], subject: string, html: string, cc?: string | string[], text?: string) {
+  async sendMail(
+    to: string | string[],
+    subject: string,
+    html: string,
+    cc?: string | string[],
+    text?: string,
+  ) {
     try {
       const info = await this.transporter.sendMail({
         from: process.env.SMTP_FROM || '"QMS Support" <support@qms.local>',
@@ -80,9 +86,16 @@ export class MailService {
   }
 
   async sendNewAuditToOps(data: {
-    to: string; cc: string[]; opsTlName: string; agentName: string;
-    ticketId: string; score: number; auditorName: string;
-    campaignName: string; interactionDate: string; isAutoFailed: boolean;
+    to: string;
+    cc: string[];
+    opsTlName: string;
+    agentName: string;
+    ticketId: string;
+    score: number;
+    auditorName: string;
+    campaignName: string;
+    interactionDate: string;
+    isAutoFailed: boolean;
   }) {
     const content = `
       <p>Hello ${data.opsTlName},</p>
@@ -96,14 +109,21 @@ export class MailService {
       <p style="color: #666666;">"Do not reply to this email"</p>
     `;
 
-    const html = this.getBaseTemplate(content, 'Manager Evaluation Notification');
+    const html = this.getBaseTemplate(
+      content,
+      'Manager Evaluation Notification',
+    );
     const subject = `📊 Alert: New Audit for ${data.agentName} (#${data.ticketId})`;
     return this.sendMail(data.to, subject, html, data.cc);
   }
 
   async sendDisputeToAuditor(data: {
-    to: string; auditorName: string; ticketId: string;
-    agentName: string; opsTlName: string; reason: string;
+    to: string;
+    auditorName: string;
+    ticketId: string;
+    agentName: string;
+    opsTlName: string;
+    reason: string;
   }) {
     const content = `
       <p>Hello ${data.auditorName},</p>
@@ -119,8 +139,13 @@ export class MailService {
   }
 
   async sendDisputeToQaLeadership(data: {
-    to: string; cc: string[]; qaTlName: string; ticketId: string;
-    agentName: string; auditorName: string; opsTlName: string;
+    to: string;
+    cc: string[];
+    qaTlName: string;
+    ticketId: string;
+    agentName: string;
+    auditorName: string;
+    opsTlName: string;
   }) {
     const content = `
       <p>Hello ${data.qaTlName},</p>
@@ -134,12 +159,22 @@ export class MailService {
     `;
 
     const html = this.getBaseTemplate(content, 'Dispute Monitor');
-    return this.sendMail(data.to, `ℹ️ Dispute Monitor: #${data.ticketId}`, html, data.cc);
+    return this.sendMail(
+      data.to,
+      `ℹ️ Dispute Monitor: #${data.ticketId}`,
+      html,
+      data.cc,
+    );
   }
 
   async sendReappealToQaLeadership(data: {
-    to: string; cc: string[]; qaTlName: string; ticketId: string;
-    agentName: string; auditorName: string; reason: string;
+    to: string;
+    cc: string[];
+    qaTlName: string;
+    ticketId: string;
+    agentName: string;
+    auditorName: string;
+    reason: string;
   }) {
     const content = `
       <p>Hello ${data.qaTlName},</p>
@@ -153,12 +188,20 @@ export class MailService {
     `;
 
     const html = this.getBaseTemplate(content, 'Re-appeal Escalation');
-    return this.sendMail(data.to, `‼️ URGENT: Re-appeal for #${data.ticketId}`, html, data.cc);
+    return this.sendMail(
+      data.to,
+      `‼️ URGENT: Re-appeal for #${data.ticketId}`,
+      html,
+      data.cc,
+    );
   }
 
   async sendResolutionToAgent(data: {
-    to: string; agentName: string; ticketId: string;
-    verdict: 'ACCEPTED' | 'REJECTED'; rationale: string;
+    to: string;
+    agentName: string;
+    ticketId: string;
+    verdict: 'ACCEPTED' | 'REJECTED';
+    rationale: string;
   }) {
     const content = `
       <p>Hello ${data.agentName},</p>
@@ -171,12 +214,21 @@ export class MailService {
     `;
 
     const html = this.getBaseTemplate(content, 'Dispute Resolution Concluded');
-    return this.sendMail(data.to, `✅ Result: Dispute for #${data.ticketId}`, html);
+    return this.sendMail(
+      data.to,
+      `✅ Result: Dispute for #${data.ticketId}`,
+      html,
+    );
   }
 
   async sendResolutionToOps(data: {
-    to: string; cc: string[]; opsTlName: string; agentName: string;
-    ticketId: string; verdict: 'ACCEPTED' | 'REJECTED'; rationale: string;
+    to: string;
+    cc: string[];
+    opsTlName: string;
+    agentName: string;
+    ticketId: string;
+    verdict: 'ACCEPTED' | 'REJECTED';
+    rationale: string;
   }) {
     const content = `
       <p>Hello ${data.opsTlName},</p>
@@ -189,6 +241,11 @@ export class MailService {
     `;
 
     const html = this.getBaseTemplate(content, 'Case Closure Notification');
-    return this.sendMail(data.to, `✅ Final Verdict: #${data.ticketId}`, html, data.cc);
+    return this.sendMail(
+      data.to,
+      `✅ Final Verdict: #${data.ticketId}`,
+      html,
+      data.cc,
+    );
   }
 }

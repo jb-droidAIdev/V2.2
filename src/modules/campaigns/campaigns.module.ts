@@ -5,9 +5,9 @@ import { PrismaService } from '../../prisma.service';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
-    imports: [AuthModule],
-    controllers: [CampaignsController],
-    providers: [CampaignsService, PrismaService],
-    exports: [CampaignsService],
+  imports: [AuthModule],
+  controllers: [CampaignsController],
+  providers: [CampaignsService, PrismaService],
+  exports: [CampaignsService],
 })
-export class CampaignsModule { }
+export class CampaignsModule {}

@@ -4,11 +4,11 @@ import { AuthGuard } from '@nestjs/passport';
 
 @Controller('qa')
 export class QaController {
-    constructor(private readonly auditService: AuditService) { }
+  constructor(private readonly auditService: AuditService) {}
 
-    @UseGuards(AuthGuard('jwt'))
-    @Get('queue')
-    async getQueue(@Request() req: any) {
-        return this.auditService.getQueue(req.user.id);
-    }
+  @UseGuards(AuthGuard('jwt'))
+  @Get('queue')
+  async getQueue(@Request() req: any) {
+    return this.auditService.getQueue(req.user.id);
+  }
 }

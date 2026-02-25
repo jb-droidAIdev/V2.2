@@ -6,405 +6,459 @@ import * as bcrypt from 'bcrypt';
 @Injectable()
 // Refreshing types
 export class UsersService {
-    constructor(private prisma: PrismaService) { }
+  constructor(private prisma: PrismaService) { }
 
-    async findOne(identifier: string): Promise<User | null> {
-        if (!identifier) return null;
+  async findByName(name: string): Promise<User | null> {
+    if (!name) return null;
+    return this.prisma.user.findFirst({
+      where: { name: { equals: name.trim(), mode: 'insensitive' } },
+    });
+  }
 
-        return this.prisma.user.findFirst({
-            where: {
-                OR: [
-                    { email: { equals: identifier.toLowerCase().trim(), mode: 'insensitive' } },
-                    { eid: identifier.trim() }
-                ]
+  async findOne(identifier: string): Promise<User | null> {
+    if (!identifier) return null;
+
+    return this.prisma.user.findFirst({
+      where: {
+        OR: [
+          {
+            email: {
+              equals: identifier.toLowerCase().trim(),
+              mode: 'insensitive',
             },
-            include: {
-                userRole: {
-                    include: {
-                        permissions: {
-                            include: { permission: true }
-                        }
-                    }
-                },
-                customPermissions: {
-                    include: { permission: true }
-                }
-            }
-        });
-    }
-
-    async findById(id: string): Promise<User | null> {
-        return this.prisma.user.findUnique({
-            where: { id },
-            include: {
-                userRole: {
-                    include: {
-                        permissions: {
-                            include: { permission: true }
-                        }
-                    }
-                },
-                customPermissions: {
-                    include: { permission: true }
-                }
-            }
-        });
-    }
-
-    async findAll(user?: any) {
-        try {
-            console.log('UsersService.findAll initiated by:', user?.email, 'Role:', user?.role);
-            let where: any = { isActive: true };
-
-            const userRoleStr = String(user?.role || '').toUpperCase();
-            const isManagerOrQA = ['QA', 'QA_TL', 'QA_MANAGER', 'OPS_TL', 'OPS_MANAGER', 'SDM'].includes(userRoleStr);
-
-            // RBAC: TLs see their own team + any campaign they are assigned to
-            if (user && isManagerOrQA && userRoleStr !== 'ADMIN') {
-                console.log('Applying filters for Manager/QA role');
-                const assignments = await this.prisma.campaignQA.findMany({
-                    where: { userId: user.id },
-                    include: { campaign: true }
-                });
-                const campaignNames = assignments.map(a => a.campaign.name);
-
-                where.OR = [
-                    { employeeTeam: user.employeeTeam },
-                    { employeeTeam: { in: campaignNames } },
-                    { role: { in: ['QA', 'QA_TL'] } } // Allow seeing the QA staff folder in Dossier
-                ];
-            }
-
-            const results = await this.prisma.user.findMany({
-                where,
-                select: {
-                    id: true,
-                    email: true,
-                    name: true,
-                    role: true,
-                    eid: true,
-                    systemId: true,
-                    billable: true,
-                    employeeTeam: true,
-                    projectCode: true,
-                    supervisor: true,
-                    manager: true,
-                    sdm: true,
-                    isActive: true,
-                    createdAt: true,
-                },
-                orderBy: { name: 'asc' }
-            });
-            console.log(`UsersService.findAll returning ${results.length} users`);
-            return results;
-        } catch (error) {
-            console.error('CRITICAL: UsersService.findAll Error:', error);
-            throw error;
-        }
-    }
-
-    async findByTeam(teamName: string, requestingUserId?: string) {
-        // Enforce strict team filtering for everyone (Admin, QA, etc.)
-        // This ensures that when evaluating a specific campaign, you only see its agents.
-        return this.prisma.user.findMany({
-            where: {
-                employeeTeam: teamName,
-                role: Role.AGENT,
-                isActive: true
+          },
+          { eid: identifier.trim() },
+        ],
+      },
+      include: {
+        userRole: {
+          include: {
+            permissions: {
+              include: { permission: true },
             },
-            select: {
-                id: true,
-                email: true,
-                name: true,
-                eid: true,
-                supervisor: true,
-                manager: true,
-                sdm: true,
-                employeeTeam: true
+          },
+        },
+        customPermissions: {
+          include: { permission: true },
+        },
+      },
+    });
+  }
+
+  async findById(id: string): Promise<User | null> {
+    return this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        userRole: {
+          include: {
+            permissions: {
+              include: { permission: true },
             },
-            orderBy: { name: 'asc' }
-        });
-    }
+          },
+        },
+        customPermissions: {
+          include: { permission: true },
+        },
+      },
+    });
+  }
 
-    async create(data: any) {
-        const { password, ...userData } = data;
-        const defaultPassword = `Fws@${userData.eid || '12345'}`;
-        const hashedPassword = await bcrypt.hash(password || defaultPassword, 10);
+  async findAll(user?: any) {
+    try {
+      console.log(
+        'UsersService.findAll initiated by:',
+        user?.email,
+        'Role:',
+        user?.role,
+      );
+      const where: any = { isActive: true };
 
-        // Dynamic RBAC: Get Role ID
-        const targetRole = userData.role || 'AGENT';
-        const userRole = await this.prisma.userRole.findUnique({ where: { name: targetRole } });
+      const userRoleStr = String(user?.role || '').toUpperCase();
+      const isManagerOrQA = [
+        'QA',
+        'QA_TL',
+        'QA_MANAGER',
+        'OPS_TL',
+        'OPS_MANAGER',
+        'SDM',
+      ].includes(userRoleStr);
 
-        // Sanitize string fields
-        const sanitizedData = Object.entries(userData).reduce((acc, [key, value]) => {
-            if (typeof value === 'string') {
-                acc[key] = value.trim();
-            } else {
-                acc[key] = value;
-            }
-            return acc;
-        }, {} as any);
-
-        return this.prisma.user.create({
-            data: {
-                ...sanitizedData,
-                password: hashedPassword,
-                mustChangePassword: true,
-                roleId: userRole?.id
-            }
-        });
-    }
-
-    async bulkCreate(users: any[]) {
-        const chunkSize = 100;
-        let processedCount = 0;
-
-        // Track valid EIDs/Emails from this upload to identify who stayed
-        const activeEids = users.filter(u => u.eid).map(u => String(u.eid));
-        const activeEmails = users.filter(u => !u.eid && u.email).map(u => u.email);
-
-        // Pre-fetch all dynamic roles to map them
-        const allRoles = await this.prisma.userRole.findMany();
-        const roleMap = new Map(allRoles.map(r => [r.name, r.id]));
-
-        for (let i = 0; i < users.length; i += chunkSize) {
-            const userChunk = users.slice(i, i + chunkSize);
-
-            await Promise.all(userChunk.map(async (u) => {
-                const role = u.role as Role || Role.AGENT;
-                const billable = u.billable === true || u.billable === 'true' || u.billable === 'Yes';
-                const roleId = roleMap.get(role);
-
-                // Robust lookup: Search by EID or Email (case-insensitive)
-                const existingUser = await this.findOne(u.eid || u.email);
-
-                const userData = {
-                    name: u.name,
-                    role: role,
-                    billable: billable,
-                    employeeTeam: u.employeeTeam,
-                    projectCode: u.projectCode,
-                    supervisor: u.supervisor,
-                    manager: u.manager,
-                    sdm: u.sdm,
-                    systemId: String(u.systemId || ''),
-                    isActive: true,
-                };
-
-                if (existingUser) {
-                    // UPDATE EXISTING: Never touch password or mustChangePassword
-                    await this.prisma.user.update({
-                        where: { id: existingUser.id },
-                        data: {
-                            ...userData,
-                            // Ensure email stays consistent with file if provided
-                            ...(u.email ? { email: u.email.toLowerCase().trim() } : {}),
-                            // Ensure EID stays consistent with file if provided
-                            ...(u.eid ? { eid: String(u.eid).trim() } : {}),
-                            // Update dynamic role mapping
-                            roleId: roleId,
-                            role: role
-                        }
-                    });
-                } else {
-                    // CREATE NEW
-                    const defaultPassStr = `Fws@${u.eid ? String(u.eid).trim() : '12345'}`;
-                    const defaultPassword = await bcrypt.hash(defaultPassStr, 10);
-                    await this.prisma.user.create({
-                        data: {
-                            ...userData,
-                            email: u.email ? u.email.toLowerCase().trim() : (u.eid ? `${u.eid.trim()}@flatworld.ph` : `user-${Math.random().toString(36).substring(7)}@placeholder.com`),
-                            eid: u.eid ? String(u.eid).trim() : null,
-                            password: defaultPassword,
-                            mustChangePassword: true,
-                            roleId: roleId
-                        }
-                    });
-                }
-                processedCount++;
-            }));
-        }
-
-        // --- ATTRITION RECONCILIATION ---
-        // Any AGENT who is currently active but NOT in the incoming file should be deactivated
-        await this.prisma.user.updateMany({
-            where: {
-                role: Role.AGENT,
-                isActive: true,
-                NOT: [
-                    { eid: { in: activeEids } },
-                    { email: { in: activeEmails } }
-                ]
-            },
-            data: { isActive: false }
-        });
-
-        return { count: processedCount };
-    }
-
-    async getUniqueTeams() {
-        const teams = await this.prisma.user.findMany({
-            where: {
-                NOT: [
-                    { employeeTeam: null },
-                    { employeeTeam: "" }
-                ]
-            },
-            select: {
-                employeeTeam: true
-            },
-            distinct: ['employeeTeam']
-        });
-        return teams.map(t => t.employeeTeam).filter(Boolean);
-    }
-
-    async updateLoginMetadata(id: string, data: { failedLoginAttempts?: number; lockoutUntil?: Date | null; lastLoginAt?: Date }) {
-        return this.prisma.user.update({
-            where: { id },
-            data
-        });
-    }
-
-    async updatePassword(id: string, password: string) {
-        const hashedPassword = await bcrypt.hash(password, 10);
-        return this.prisma.user.update({
-            where: { id },
-            data: {
-                password: hashedPassword,
-                mustChangePassword: false
-            }
-        });
-    }
-
-    async resetToDefaultPassword(id: string) {
-        const user = await this.prisma.user.findUnique({ where: { id } });
-        if (!user) throw new Error('User not found');
-
-        const defaultPassword = `Fws@${user.eid || '12345'}`;
-        const hashedPassword = await bcrypt.hash(defaultPassword, 10);
-
-        return this.prisma.user.update({
-            where: { id },
-            data: {
-                password: hashedPassword,
-                mustChangePassword: true
-            }
-        });
-    }
-
-    async remove(id: string) {
-        return this.prisma.user.delete({
-            where: { id }
-        });
-    }
-
-    async bulkUpdateTeam(oldTeamName: string, newTeamName: string) {
-        return this.prisma.user.updateMany({
-            where: { employeeTeam: oldTeamName },
-            data: { employeeTeam: newTeamName }
-        });
-    }
-
-    // Scoped update — only sets employeeTeam, used by CAMPAIGN_MANAGE endpoints
-    async assignUsersToTeam(userIds: string[], teamName: string) {
-        return this.prisma.user.updateMany({
-            where: { id: { in: userIds } },
-            data: { employeeTeam: teamName }
-        });
-    }
-
-    async updateUser(id: string, data: any) {
-        // If role is being updated, we must update the roleId mapping
-        let updateData = { ...data };
-
-        if (data.role) {
-            const userRole = await this.prisma.userRole.findUnique({ where: { name: data.role } });
-            if (userRole) {
-                updateData.roleId = userRole.id;
-            }
-        }
-
-        // Handle password update if provided
-        if (data.password && data.password.trim() !== "") {
-            updateData.password = await bcrypt.hash(data.password, 10);
-            // Default to forcing a change if set via general update (admin action)
-            updateData.mustChangePassword = data.mustChangePassword ?? true;
-        } else {
-            // Remove empty password from update to avoid overwriting with empty string
-            delete updateData.password;
-        }
-
-        return this.prisma.user.update({
-            where: { id },
-            data: updateData
-        });
-    }
-
-    async findAllRoles() {
-        return this.prisma.userRole.findMany({
-            include: {
-                permissions: {
-                    include: { permission: true }
-                }
-            },
-            orderBy: { name: 'asc' }
-        });
-    }
-
-    async updateRolePermissions(roleId: string, permissionCodes: string[]) {
-        // 1. Get all permission IDs for the codes
-        const permissions = await this.prisma.permission.findMany({
-            where: { code: { in: permissionCodes } }
-        });
-
-        // 2. Clear existing permissions
-        await this.prisma.rolePermission.deleteMany({
-            where: { roleId }
-        });
-
-        // 3. Add new ones
-        if (permissions.length > 0) {
-            await this.prisma.rolePermission.createMany({
-                data: permissions.map(p => ({
-                    roleId,
-                    permissionId: p.id
-                }))
-            });
-        }
-
-        return this.findAllRoles(); // Return updated list
-    }
-
-    async getAllPermissions() {
-        return this.prisma.permission.findMany({
-            orderBy: { module: 'asc' }
-        });
-    }
-
-    async getAssignedCampaigns(userId: string) {
+      // RBAC: TLs see their own team + any campaign they are assigned to
+      if (user && isManagerOrQA && userRoleStr !== 'ADMIN') {
+        console.log('Applying filters for Manager/QA role');
         const assignments = await this.prisma.campaignQA.findMany({
-            where: { userId },
-            include: { campaign: true }
+          where: { userId: user.id },
+          include: { campaign: true },
         });
-        return assignments.map(a => a.campaign);
-    }
+        const campaignNames = assignments.map((a) => a.campaign.name);
 
-    async assignCampaigns(userId: string, campaignIds: string[]) {
-        return this.prisma.$transaction(async (tx) => {
-            // 1. Remove all existing assignments
-            await tx.campaignQA.deleteMany({
-                where: { userId }
+        where.OR = [
+          { employeeTeam: user.employeeTeam },
+          { employeeTeam: { in: campaignNames } },
+          { role: { in: ['QA', 'QA_TL'] } }, // Allow seeing the QA staff folder in Dossier
+        ];
+      }
+
+      const results = await this.prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          eid: true,
+          systemId: true,
+          billable: true,
+          employeeTeam: true,
+          projectCode: true,
+          supervisor: true,
+          manager: true,
+          sdm: true,
+          isActive: true,
+          createdAt: true,
+        },
+        orderBy: { name: 'asc' },
+      });
+      console.log(`UsersService.findAll returning ${results.length} users`);
+      return results;
+    } catch (error) {
+      console.error('CRITICAL: UsersService.findAll Error:', error);
+      throw error;
+    }
+  }
+
+  async findByTeam(teamName: string, requestingUserId?: string) {
+    // Enforce strict team filtering for everyone (Admin, QA, etc.)
+    // This ensures that when evaluating a specific campaign, you only see its agents.
+    return this.prisma.user.findMany({
+      where: {
+        employeeTeam: teamName,
+        role: Role.AGENT,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        eid: true,
+        supervisor: true,
+        manager: true,
+        sdm: true,
+        employeeTeam: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async create(data: any) {
+    const { password, ...userData } = data;
+    const defaultPassword = `Fws@${userData.eid || '12345'}`;
+    const hashedPassword = await bcrypt.hash(password || defaultPassword, 10);
+
+    // Dynamic RBAC: Get Role ID
+    const targetRole = userData.role || 'AGENT';
+    const userRole = await this.prisma.userRole.findUnique({
+      where: { name: targetRole },
+    });
+
+    // Sanitize string fields
+    const sanitizedData = Object.entries(userData).reduce(
+      (acc, [key, value]) => {
+        if (typeof value === 'string') {
+          acc[key] = value.trim();
+        } else {
+          acc[key] = value;
+        }
+        return acc;
+      },
+      {} as any,
+    );
+
+    return this.prisma.user.create({
+      data: {
+        ...sanitizedData,
+        password: hashedPassword,
+        mustChangePassword: true,
+        roleId: userRole?.id,
+      },
+    });
+  }
+
+  async bulkCreate(users: any[]) {
+    const chunkSize = 100;
+    let processedCount = 0;
+
+    // Track valid EIDs/Emails from this upload to identify who stayed
+    const activeEids = users.filter((u) => u.eid).map((u) => String(u.eid));
+    const activeEmails = users
+      .filter((u) => !u.eid && u.email)
+      .map((u) => u.email);
+
+    // Pre-fetch all dynamic roles to map them
+    const allRoles = await this.prisma.userRole.findMany();
+    const roleMap = new Map(allRoles.map((r) => [r.name, r.id]));
+
+    for (let i = 0; i < users.length; i += chunkSize) {
+      const userChunk = users.slice(i, i + chunkSize);
+
+      await Promise.all(
+        userChunk.map(async (u) => {
+          const role = (u.role as Role) || Role.AGENT;
+          const billable =
+            u.billable === true ||
+            u.billable === 'true' ||
+            u.billable === 'Yes';
+          const roleId = roleMap.get(role);
+
+          // Robust lookup: Search by EID or Email (case-insensitive)
+          const existingUser = await this.findOne(u.eid || u.email);
+
+          const userData = {
+            name: u.name,
+            role: role,
+            billable: billable,
+            employeeTeam: u.employeeTeam,
+            projectCode: u.projectCode,
+            supervisor: u.supervisor,
+            manager: u.manager,
+            sdm: u.sdm,
+            systemId: String(u.systemId || ''),
+            isActive: true,
+          };
+
+          if (existingUser) {
+            // UPDATE EXISTING: Never touch password or mustChangePassword
+            await this.prisma.user.update({
+              where: { id: existingUser.id },
+              data: {
+                ...userData,
+                // Ensure email stays consistent with file if provided
+                ...(u.email ? { email: u.email.toLowerCase().trim() } : {}),
+                // Ensure EID stays consistent with file if provided
+                ...(u.eid ? { eid: String(u.eid).trim() } : {}),
+                // Update dynamic role mapping
+                roleId: roleId,
+                role: role,
+              },
             });
-
-            // 2. Create new assignments
-            if (campaignIds.length > 0) {
-                await tx.campaignQA.createMany({
-                    data: campaignIds.map(campaignId => ({
-                        userId,
-                        campaignId
-                    }))
-                });
-            }
-        });
+          } else {
+            // CREATE NEW
+            const defaultPassStr = `Fws@${u.eid ? String(u.eid).trim() : '12345'}`;
+            const defaultPassword = await bcrypt.hash(defaultPassStr, 10);
+            await this.prisma.user.create({
+              data: {
+                ...userData,
+                email: u.email
+                  ? u.email.toLowerCase().trim()
+                  : u.eid
+                    ? `${u.eid.trim()}@flatworld.ph`
+                    : `user-${Math.random().toString(36).substring(7)}@placeholder.com`,
+                eid: u.eid ? String(u.eid).trim() : null,
+                password: defaultPassword,
+                mustChangePassword: true,
+                roleId: roleId,
+              },
+            });
+          }
+          processedCount++;
+        }),
+      );
     }
+
+    // --- ATTRITION RECONCILIATION ---
+    // Any AGENT who is currently active but NOT in the incoming file should be deactivated
+    await this.prisma.user.updateMany({
+      where: {
+        role: Role.AGENT,
+        isActive: true,
+        NOT: [{ eid: { in: activeEids } }, { email: { in: activeEmails } }],
+      },
+      data: { isActive: false },
+    });
+
+    return { count: processedCount };
+  }
+
+  async getUniqueTeams() {
+    const teams = await this.prisma.user.findMany({
+      where: {
+        NOT: [{ employeeTeam: null }, { employeeTeam: '' }],
+      },
+      select: {
+        employeeTeam: true,
+      },
+      distinct: ['employeeTeam'],
+    });
+    return teams.map((t) => t.employeeTeam).filter(Boolean);
+  }
+
+  async updateLoginMetadata(
+    id: string,
+    data: {
+      failedLoginAttempts?: number;
+      lockoutUntil?: Date | null;
+      lastLoginAt?: Date;
+    },
+  ) {
+    return this.prisma.user.update({
+      where: { id },
+      data,
+    });
+  }
+
+  async updatePassword(id: string, password: string) {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    return this.prisma.user.update({
+      where: { id },
+      data: {
+        password: hashedPassword,
+        mustChangePassword: false,
+      },
+    });
+  }
+
+  async resetToDefaultPassword(id: string) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new Error('User not found');
+
+    const defaultPassword = `Fws@${user.eid || '12345'}`;
+    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+
+    return this.prisma.user.update({
+      where: { id },
+      data: {
+        password: hashedPassword,
+        mustChangePassword: true,
+      },
+    });
+  }
+
+  async remove(id: string) {
+    return this.prisma.user.delete({
+      where: { id },
+    });
+  }
+
+  async bulkUpdateTeam(oldTeamName: string, newTeamName: string) {
+    return this.prisma.user.updateMany({
+      where: { employeeTeam: oldTeamName },
+      data: { employeeTeam: newTeamName },
+    });
+  }
+
+  // Scoped update — only sets employeeTeam, used by CAMPAIGN_MANAGE endpoints
+  async assignUsersToTeam(userIds: string[], teamName: string) {
+    return this.prisma.user.updateMany({
+      where: { id: { in: userIds } },
+      data: { employeeTeam: teamName },
+    });
+  }
+
+  async updateUser(id: string, data: any) {
+    // If role is being updated, we must update the roleId mapping
+    const updateData = { ...data };
+
+    if (data.role) {
+      const userRole = await this.prisma.userRole.findUnique({
+        where: { name: data.role },
+      });
+      if (userRole) {
+        updateData.roleId = userRole.id;
+      }
+    }
+
+    // Handle password update if provided
+    if (data.password && data.password.trim() !== '') {
+      updateData.password = await bcrypt.hash(data.password, 10);
+      // Default to forcing a change if set via general update (admin action)
+      updateData.mustChangePassword = data.mustChangePassword ?? true;
+    } else {
+      // Remove empty password from update to avoid overwriting with empty string
+      delete updateData.password;
+    }
+
+    return this.prisma.user.update({
+      where: { id },
+      data: updateData,
+    });
+  }
+
+  async findAllRoles() {
+    return this.prisma.userRole.findMany({
+      include: {
+        permissions: {
+          include: { permission: true },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async updateRolePermissions(roleId: string, permissionCodes: string[]) {
+    // 1. Get all permission IDs for the codes
+    const permissions = await this.prisma.permission.findMany({
+      where: { code: { in: permissionCodes } },
+    });
+
+    // 2. Clear existing permissions
+    await this.prisma.rolePermission.deleteMany({
+      where: { roleId },
+    });
+
+    // 3. Add new ones
+    if (permissions.length > 0) {
+      await this.prisma.rolePermission.createMany({
+        data: permissions.map((p) => ({
+          roleId,
+          permissionId: p.id,
+        })),
+      });
+    }
+
+    return this.findAllRoles(); // Return updated list
+  }
+
+  async getAllPermissions() {
+    return this.prisma.permission.findMany({
+      orderBy: { module: 'asc' },
+    });
+  }
+
+  async getAssignedCampaigns(userId: string) {
+    const assignments = await this.prisma.campaignQA.findMany({
+      where: { userId },
+      include: {
+        campaign: true,
+        form: { select: { id: true, name: true } },
+      },
+    });
+    return assignments.map((a) => ({
+      ...a.campaign,
+      assignedFormId: a.formId || null,
+      assignedFormName: a.form?.name || null,
+    }));
+  }
+
+  async assignCampaigns(
+    userId: string,
+    assignments: { campaignId: string; formId?: string | null }[],
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Remove all existing assignments
+      await tx.campaignQA.deleteMany({
+        where: { userId },
+      });
+
+      // 2. Create new assignments (with optional form pinning)
+      if (assignments.length > 0) {
+        await tx.campaignQA.createMany({
+          data: assignments.map(({ campaignId, formId }) => ({
+            userId,
+            campaignId,
+            formId: formId || null,
+          })),
+        });
+      }
+    });
+  }
 }

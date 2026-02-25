@@ -4,9 +4,9 @@ import { ReleaseController } from './release.controller';
 import { SlaEngineModule } from '../sla-engine/sla-engine.module';
 
 @Module({
-    imports: [SlaEngineModule],
-    providers: [ReleaseService],
-    controllers: [ReleaseController],
-    exports: [ReleaseService],
+  imports: [SlaEngineModule],
+  providers: [ReleaseService],
+  controllers: [ReleaseController],
+  exports: [ReleaseService],
 })
-export class ReleaseModule { }
+export class ReleaseModule {}

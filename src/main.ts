@@ -32,5 +32,5 @@ async function bootstrap() {
   await app.listen(port);
   console.log(`Backend is running on: http://0.0.0.0:${port}`);
 }
-console.log("!!! BACKEND RESTARTED - ROLES CONFIG UPDATE !!!");
+console.log('!!! BACKEND RESTARTED - ROLES CONFIG UPDATE !!!');
 bootstrap();

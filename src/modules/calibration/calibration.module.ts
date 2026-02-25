@@ -6,9 +6,9 @@ import { PrismaService } from '../../prisma.service';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
-    imports: [AuthModule],
-    controllers: [CalibrationController],
-    providers: [CalibrationService, PrismaService],
-    exports: [CalibrationService],
+  imports: [AuthModule],
+  controllers: [CalibrationController],
+  providers: [CalibrationService, PrismaService],
+  exports: [CalibrationService],
 })
-export class CalibrationModule { }
+export class CalibrationModule {}

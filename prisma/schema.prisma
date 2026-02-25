@@ -28,8 +28,10 @@ model User {
   lastLoginAt                DateTime?
   lockoutUntil               DateTime?
   mustChangePassword         Boolean                  @default(true)
+  roleId                     String?
   auditsReceived             Audit[]                  @relation("Agent")
   auditsConducted            Audit[]                  @relation("Auditor")
+  auditUserViews             AuditUserView[]
   amSdmAnchorApprovals       CalibrationAnchor[]      @relation("AMSDMApprover")
   qaTlAnchorApprovals        CalibrationAnchor[]      @relation("QATLApprover")
   calibrationSessions        CalibrationParticipant[]
@@ -40,10 +42,6 @@ model User {
   createdFormVersions        MonitoringFormVersion[]  @relation("FormVersionCreator")
   notifications              Notification[]
   uploadedBatches            TicketUploadBatch[]
-  auditUserViews             AuditUserView[]
-  
-  // RBAC Relations
-  roleId                     String?
   userRole                   UserRole?                @relation(fields: [roleId], references: [id])
   customPermissions          UserPermission[]
 }
@@ -67,29 +65,32 @@ model Campaign {
 }
 
 model CampaignQA {
-  id         String   @id @default(uuid())
+  id         String          @id @default(uuid())
   campaignId String
   userId     String
-  isActive   Boolean  @default(true)
-  assignedAt DateTime @default(now())
-  campaign   Campaign @relation(fields: [campaignId], references: [id])
-  user       User     @relation(fields: [userId], references: [id])
+  formId     String?         // Optional: pin to a specific form within this campaign
+  isActive   Boolean         @default(true)
+  assignedAt DateTime        @default(now())
+  campaign   Campaign        @relation(fields: [campaignId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
+  form       MonitoringForm? @relation(fields: [formId], references: [id])
 
   @@unique([campaignId, userId])
 }
 
 model MonitoringForm {
-  id           String                  @id @default(uuid())
-  campaignId   String?
-  name         String
-  description  String?
-  createdAt    DateTime                @default(now())
-  updatedAt    DateTime                @updatedAt
-  teamName     String?
-  isConfigured Boolean                 @default(false)
-  isArchived   Boolean                 @default(false)
-  campaign     Campaign?               @relation(fields: [campaignId], references: [id])
-  versions     MonitoringFormVersion[]
+  id            String                  @id @default(uuid())
+  campaignId    String?
+  name          String
+  description   String?
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+  teamName      String?
+  isConfigured  Boolean                 @default(false)
+  isArchived    Boolean                 @default(false)
+  campaign      Campaign?               @relation(fields: [campaignId], references: [id])
+  versions      MonitoringFormVersion[]
+  qaAssignments CampaignQA[]
 }
 
 model MonitoringFormVersion {
@@ -198,20 +199,20 @@ model Audit {
   events             AuditEvent[]
   fieldValues        AuditFieldValue[]
   scores             AuditScore[]
+  userViews          AuditUserView[]
   calibrationAnchors CalibrationAnchor[]
   calibrationTickets CalibrationTicket[]
   dispute            Dispute?
   releaseInfo        ReleaseRecord?
-  userViews          AuditUserView[]
 }
 
 model AuditUserView {
-  id        String   @id @default(uuid())
-  auditId   String
-  userId    String
-  viewedAt  DateTime @default(now())
-  audit     Audit    @relation(fields: [auditId], references: [id])
-  user      User     @relation(fields: [userId], references: [id])
+  id       String   @id @default(uuid())
+  auditId  String
+  userId   String
+  viewedAt DateTime @default(now())
+  audit    Audit    @relation(fields: [auditId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
 
   @@unique([auditId, userId])
 }
@@ -450,24 +451,13 @@ model CalibrationResult {
   @@unique([sessionId, userId])
 }
 
-enum Role {
-  AGENT
-  QA
-  QA_TL
-  OPS_TL
-  ADMIN
-  QA_MANAGER
-  OPS_MANAGER
-  SDM
-}
-
 model UserRole {
   id          String           @id @default(uuid())
   name        String           @unique
   description String?
   isSystem    Boolean          @default(false)
-  users       User[]
   permissions RolePermission[]
+  users       User[]
 }
 
 model Permission {
@@ -482,8 +472,8 @@ model Permission {
 model RolePermission {
   roleId       String
   permissionId String
-  role         UserRole   @relation(fields: [roleId], references: [id], onDelete: Cascade)
   permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role         UserRole   @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@id([roleId, permissionId])
 }
@@ -491,10 +481,21 @@ model RolePermission {
 model UserPermission {
   userId       String
   permissionId String
-  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, permissionId])
+}
+
+enum Role {
+  AGENT
+  QA
+  QA_TL
+  OPS_TL
+  ADMIN
+  QA_MANAGER
+  OPS_MANAGER
+  SDM
 }
 
 enum AuditStatus {
@@ -504,6 +505,7 @@ enum AuditStatus {
   RELEASED
   DISPUTED
   REAPPEALED
+  ACKNOWLEDGED
 }
 
 enum DisputeStatus {

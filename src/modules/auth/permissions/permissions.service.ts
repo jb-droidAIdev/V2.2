@@ -38,45 +38,48 @@ export class PermissionsService {
   // To be efficient, we should load permissions during Guard execution or in the JWT payload
 }
 
-// Deprecated enum for backward compatibility if needed, but we should use strings now.
+// Canonical permission codes — must match the `code` column in the Permission table.
 export enum Permission {
-  // Audit Permissions
-  AUDIT_CREATE = 'AUDIT_CREATE',
-  AUDIT_VIEW_SELF = 'AUDIT_VIEW_SELF',
-  AUDIT_VIEW_TEAM = 'AUDIT_VIEW_TEAM',
-  AUDIT_VIEW_ALL = 'AUDIT_VIEW_ALL',
-  AUDIT_DELETE = 'AUDIT_DELETE',
+  // ── Page Access ────────────────────────────────────────────────────
+  PAGE_DASHBOARD = 'PAGE_DASHBOARD',
+  PAGE_DOSSIER = 'PAGE_DOSSIER',
+  PAGE_AUDITS = 'PAGE_AUDITS',
+  PAGE_EVALUATE = 'PAGE_EVALUATE',
+  PAGE_CALIBRATION = 'PAGE_CALIBRATION',
+  PAGE_FORMS = 'PAGE_FORMS',
+  PAGE_ADMIN = 'PAGE_ADMIN',
 
-  // Dispute Permissions
+  // ── System ─────────────────────────────────────────────────────────
+  USER_MANAGE = 'USER_MANAGE',
+  CAMPAIGN_MANAGE = 'CAMPAIGN_MANAGE',
+  WILDCARD = '*',
+
+  // ── Audit ──────────────────────────────────────────────────────────
+  AUDIT_CREATE = 'AUDIT_CREATE',
+  AUDIT_VIEW_ALL = 'AUDIT_VIEW_ALL',
+  AUDIT_VIEW_OWN = 'AUDIT_VIEW_OWN',
+  AUDIT_VIEW_TEAM = 'AUDIT_VIEW_TEAM',
+  AUDIT_ACKNOWLEDGE = 'AUDIT_ACKNOWLEDGE',
+  AUDIT_DELETE = 'AUDIT_DELETE',
+  AUDIT_COACH = 'AUDIT_COACH',
+
+  // ── Dispute ────────────────────────────────────────────────────────
   DISPUTE_CREATE = 'DISPUTE_CREATE',
   DISPUTE_RESOLVE = 'DISPUTE_RESOLVE',
   DISPUTE_REAPPEAL = 'DISPUTE_REAPPEAL',
   DISPUTE_FINAL_VERDICT = 'DISPUTE_FINAL_VERDICT',
 
-  // Form Permissions
-  FORM_CREATE = 'FORM_CREATE',
-  FORM_EDIT = 'FORM_EDIT',
-  FORM_ARCHIVE = 'FORM_ARCHIVE',
-
-  // Calibration Permissions
-  CALIBRATION_CREATE = 'CALIBRATION_CREATE',
+  // ── Calibration ────────────────────────────────────────────────────
   CALIBRATION_VIEW = 'CALIBRATION_VIEW',
+  CALIBRATION_CREATE = 'CALIBRATION_CREATE',
   CALIBRATION_MANAGE = 'CALIBRATION_MANAGE',
-  CALIBRATION_VALIDATE_ANCHOR = 'CALIBRATION_VALIDATE_ANCHOR',
   CALIBRATION_SCORE = 'CALIBRATION_SCORE',
+  CALIBRATION_VALIDATE_ANCHOR = 'CALIBRATION_VALIDATE_ANCHOR',
 
-  // User/System Permissions
-  USER_MANAGE = 'USER_MANAGE',
-  USER_RESET_PASSWORD = 'USER_RESET_PASSWORD',
-  CAMPAIGN_MANAGE = 'CAMPAIGN_MANAGE',
-  DASHBOARD_VIEW = 'DASHBOARD_VIEW',
-
-  // Page Access
-  PAGE_DASHBOARD = 'PAGE_DASHBOARD',
-  PAGE_DOSSIER = 'PAGE_DOSSIER',
-  PAGE_FORMS = 'PAGE_FORMS',
-  PAGE_AUDITS = 'PAGE_AUDITS',
-  PAGE_EVALUATE = 'PAGE_EVALUATE',
-  PAGE_CALIBRATION = 'PAGE_CALIBRATION',
-  PAGE_ADMIN = 'PAGE_ADMIN',
+  // ── Forms ──────────────────────────────────────────────────────────
+  FORM_CREATE = 'FORM_CREATE',
+  FORM_PUBLISH = 'FORM_PUBLISH',
+  FORM_ARCHIVE = 'FORM_ARCHIVE',
+  FORM_DELETE = 'FORM_DELETE',
+  FORM_DUPLICATE = 'FORM_DUPLICATE',
 }

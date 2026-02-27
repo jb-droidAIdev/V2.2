@@ -13,7 +13,7 @@ export class AuditService {
   constructor(
     private prisma: PrismaService,
     private mailService: MailService,
-  ) { }
+  ) {}
 
   async getActiveAudit(auditorId: string) {
     const audit = await this.prisma.audit.findFirst({
@@ -79,57 +79,58 @@ export class AuditService {
     };
   }
 
-  async findAll(user: any) {
+  async findAll(user: any, options?: { limit?: number; offset?: number }) {
     const where: any = {};
-    const role = String(user.role || '').toUpperCase();
-    const isStaff = role !== 'AGENT';
+    const permissions = user.permissions || [];
+    const canViewAll =
+      permissions.includes('AUDIT_VIEW_ALL') || permissions.includes('*');
+    const canViewTeam = permissions.includes('AUDIT_VIEW_TEAM');
+    const canViewOwn = permissions.includes('AUDIT_VIEW_OWN');
 
-    if (role === 'AGENT') {
-      where.agentId = user.id;
-      where.status = {
-        in: [
-          AuditStatus.RELEASED,
-          AuditStatus.ACKNOWLEDGED,
-          (AuditStatus as any).DISPUTED,
-          (AuditStatus as any).REAPPEALED,
-        ],
-      };
-    } else if (
-      [
-        'QA_TL',
-        'QATL',
-        'OPS_TL',
-        'OPSTL',
-        'OPS_MANAGER',
-        'OPSMANAGER',
-        'SDM',
-        'QA',
-      ].includes(role)
-    ) {
-      // Managers & QAs only see their assigned campaigns
+    if (canViewAll) {
+      // Sees everything, no filters
+    } else if (canViewTeam) {
+      // Check for campaign assignments
       const assignments = await this.prisma.campaignQA.findMany({
         where: { userId: user.id, isActive: true },
         select: { campaignId: true },
       });
-      const assignedIds = assignments.map((a) => a.campaignId);
-      where.campaignId = { in: assignedIds };
-    } else if (!isStaff) {
-      // Further restricted roles (if any) only see their own team
-      where.agent = { ...where.agent, employeeTeam: user.employeeTeam };
-    }
-    // ADMIN and QA see everything (where stays empty)
 
-    const audits = await this.prisma.audit.findMany({
+      const assignedIds = assignments.map((a) => a.campaignId);
+
+      if (assignedIds.length > 0) {
+        where.campaignId = { in: assignedIds };
+      } else {
+        // Fallback: If no campaign assignments, see their own team's audits
+        where.agent = { employeeTeam: user.employeeTeam || 'UNKNOWN' };
+      }
+    } else if (canViewOwn) {
+      // Agents see their own results only, and only if released/disputed
+      where.agentId = user.id;
+      where.status = {
+        in: [
+          AuditStatus.RELEASED,
+          (AuditStatus as any).ACKNOWLEDGED,
+          AuditStatus.DISPUTED,
+          AuditStatus.REAPPEALED,
+        ],
+      };
+    } else {
+      // Default: No view permissions, return nothing
+      return [];
+    }
+
+    const queryOptions: any = {
       where,
       include: {
         agent: {
           select: { name: true, eid: true, email: true },
         },
         auditor: {
-          select: { name: true, eid: true },
+          select: { name: true, eid: true, role: true },
         },
         campaign: {
-          select: { name: true },
+          select: { name: true, projectCode: true },
         },
         formVersion: {
           include: {
@@ -138,22 +139,36 @@ export class AuditService {
             },
           },
         },
+        fieldValues: true,
         sampledTicket: {
           include: { ticket: true },
         },
         userViews: {
           where: { userId: user.id },
         },
+        coachingLog: {
+          select: { id: true, releasedAt: true },
+        },
       } as any,
       orderBy: { lastActionAt: 'desc' },
-    });
+    };
 
-    return (audits as any[]).map((audit) => {
+    if (options?.limit) {
+      queryOptions.take = Number(options.limit);
+      queryOptions.skip = Number(options.offset || 0);
+    }
+
+    const audits = await this.prisma.audit.findMany(queryOptions);
+    const total = await this.prisma.audit.count({ where });
+
+    const data = (audits as any[]).map((audit) => {
       const lastView = audit.userViews?.[0];
       const isUnread =
         !lastView || new Date(lastView.viewedAt) < new Date(audit.lastActionAt);
       return { ...audit, isUnread };
     });
+
+    return options?.limit ? { data, total } : data;
   }
 
   async getFailures(user: any, filters: any = {}) {
@@ -214,52 +229,52 @@ export class AuditService {
       }
     }
 
-    // 3. RBAC: Data Visibility Logic
-    const role = String(user.role || '').toUpperCase();
-    const isStaff = role !== 'AGENT';
-    const restrictedRoles = [
-      'QA_TL',
-      'QATL',
-      'OPS_TL',
-      'OPSTL',
-      'OPS_MANAGER',
-      'OPSMANAGER',
-      'SDM',
-      'QA',
-    ];
+    // 3. Permission-based Data Visibility
+    const permissions = user.permissions || [];
+    const canViewAll =
+      permissions.includes('AUDIT_VIEW_ALL') || permissions.includes('*');
+    const canViewTeam = permissions.includes('AUDIT_VIEW_TEAM');
+    const canViewOwn = permissions.includes('AUDIT_VIEW_OWN');
 
-    if (role === 'AGENT') {
-      where.agentId = user.id;
-      where.status = {
-        in: [
-          AuditStatus.RELEASED,
-          AuditStatus.ACKNOWLEDGED,
-          (AuditStatus as any).DISPUTED,
-          (AuditStatus as any).REAPPEALED,
-        ],
-      };
-    } else if (restrictedRoles.includes(role)) {
+    if (canViewAll) {
+      // Sees everything
+    } else if (canViewTeam) {
       const userAssignments = await this.prisma.campaignQA.findMany({
         where: { userId: user.id, isActive: true },
         select: { campaignId: true },
       });
       const assignedIds = userAssignments.map((a) => a.campaignId);
 
-      if (where.campaignId && where.campaignId.in) {
-        const requested = where.campaignId.in;
-        const intersected = requested.filter((id: string) =>
-          assignedIds.includes(id),
-        );
-        if (intersected.length === 0) return [];
-        where.campaignId = { in: intersected };
+      if (assignedIds.length > 0) {
+        if (where.campaignId && where.campaignId.in) {
+          const requested = where.campaignId.in;
+          const intersected = requested.filter((id: string) =>
+            assignedIds.includes(id),
+          );
+          if (intersected.length === 0) return [];
+          where.campaignId = { in: intersected };
+        } else {
+          where.campaignId = { in: assignedIds };
+        }
       } else {
-        where.campaignId = { in: assignedIds };
+        // Fallback: see their own team's failures
+        where.agent = {
+          ...where.agent,
+          employeeTeam: user.employeeTeam || 'UNKNOWN',
+        };
       }
-    } else if (!isStaff) {
-      where.agent = {
-        ...where.agent,
-        employeeTeam: user.employeeTeam,
+    } else if (canViewOwn) {
+      where.agentId = user.id;
+      where.status = {
+        in: [
+          AuditStatus.RELEASED,
+          (AuditStatus as any).ACKNOWLEDGED,
+          AuditStatus.DISPUTED,
+          AuditStatus.REAPPEALED,
+        ],
       };
+    } else {
+      return [];
     }
 
     return this.prisma.audit.findMany({
@@ -568,7 +583,7 @@ export class AuditService {
     });
   }
 
-  async findOne(id: string, userId?: string) {
+  async findOne(id: string, user: any) {
     const audit = await this.prisma.audit.findUnique({
       where: { id },
       include: {
@@ -580,13 +595,13 @@ export class AuditService {
           include: { criterion: true },
         },
         agent: {
-          select: { name: true, eid: true, employeeTeam: true },
+          select: { id: true, name: true, eid: true, employeeTeam: true },
         },
         auditor: {
-          select: { name: true, eid: true },
+          select: { id: true, name: true, eid: true },
         },
         campaign: {
-          select: { name: true },
+          select: { id: true, name: true, projectCode: true },
         },
         sampledTicket: {
           include: { ticket: true },
@@ -596,18 +611,44 @@ export class AuditService {
 
     if (!audit) throw new NotFoundException('Audit not found');
 
-    if (userId) {
-      // Record view safely after confirming existence
-      try {
-        await (this.prisma as any).auditUserView.upsert({
-          where: { auditId_userId: { auditId: id, userId } },
-          create: { auditId: id, userId },
-          update: { viewedAt: new Date() },
-        });
-      } catch (e) {
-        // Ignore view tracking errors to prevent blocking the read
-        console.warn('Failed to track audit view:', e);
+    // ── Permission & Ownership Check ───────────────────────────────────
+    const perms = user.permissions || [];
+    const isOwner = audit.agentId === user.id;
+    const isAuditor = audit.auditorId === user.id;
+    const canViewAll = perms.includes('AUDIT_VIEW_ALL') || perms.includes('*');
+    const canViewOwn = perms.includes('AUDIT_VIEW_OWN') && isOwner;
+
+    let isAuthorized = canViewAll || canViewOwn || isAuditor;
+
+    if (!isAuthorized && perms.includes('AUDIT_VIEW_TEAM')) {
+      // Check campaign assignments
+      const assignments = await this.prisma.campaignQA.findMany({
+        where: { userId: user.id, isActive: true },
+        select: { campaignId: true },
+      });
+      const assignedIds = assignments.map((a) => a.campaignId);
+
+      const isAssignedToCampaign = assignedIds.includes(audit.campaignId);
+      const isSameTeam = audit.agent?.employeeTeam === user.employeeTeam;
+
+      if (isAssignedToCampaign || isSameTeam) {
+        isAuthorized = true;
       }
+    }
+
+    if (!isAuthorized) {
+      throw new ForbiddenException('You are not authorized to view this audit');
+    }
+
+    // Record view safely
+    try {
+      await (this.prisma as any).auditUserView.upsert({
+        where: { auditId_userId: { auditId: id, userId: user.id } },
+        create: { auditId: id, userId: user.id },
+        update: { viewedAt: new Date() },
+      });
+    } catch (e) {
+      console.warn('Failed to track audit view:', e);
     }
 
     // ENRICHMENT: Calculate ZTP Milestones for the preview
@@ -616,10 +657,10 @@ export class AuditService {
         if (!score.isFailed || !audit.submittedAt)
           return { ...score, reachedMilestone: null };
 
-        const category = (
-          score.categoryLabel ||
-          score.criterion?.categoryName ||
-          'General'
+        const parameterName = (
+          score.criterionTitle ||
+          score.criterion?.title ||
+          'Unknown Parameter'
         ).trim();
         const auditDate = new Date(audit.submittedAt);
         const windowStart = new Date(auditDate);
@@ -629,7 +670,7 @@ export class AuditService {
         const count = await this.prisma.auditScore.count({
           where: {
             isFailed: true,
-            categoryLabel: category,
+            criterionTitle: parameterName,
             audit: {
               agentId: audit.agentId,
               submittedAt: {
@@ -655,6 +696,7 @@ export class AuditService {
     id: string,
     auditorId: string,
     data: {
+      ticketReference?: string;
       fieldValues?: Record<string, string>;
       scores?: {
         criterionId: string;
@@ -741,6 +783,9 @@ export class AuditService {
     await this.prisma.audit.update({
       where: { id },
       data: {
+        ...(data.ticketReference !== undefined
+          ? { ticketReference: data.ticketReference }
+          : {}),
         score: percent,
         isAutoFailed,
         lastActionAt: new Date(),
@@ -785,8 +830,15 @@ export class AuditService {
       include: { criterion: true },
     });
 
-    // A. Completeness Check
-    const scoredCriteriaIds = new Set(dbScores.map((s) => s.criterionId));
+    // A. Completeness Check (Only count scores for parameters in this specific FormVersion)
+    const validCriterionIds = new Set(
+      audit.formVersion.criteria.map((c) => c.id),
+    );
+    const relevantScores = dbScores.filter((s) =>
+      validCriterionIds.has(s.criterionId),
+    );
+    const scoredCriteriaIds = new Set(relevantScores.map((s) => s.criterionId));
+
     if (scoredCriteriaIds.size !== audit.formVersion.criteria.length) {
       throw new BadRequestException(
         `Audit is incomplete. Scored ${scoredCriteriaIds.size} out of ${audit.formVersion.criteria.length} items.`,
@@ -794,7 +846,7 @@ export class AuditService {
     }
 
     // B. Mandatory remarks for "No" scores
-    const failedScoresWithoutRemarks = dbScores.filter((s) => {
+    const failedScoresWithoutRemarks = relevantScores.filter((s) => {
       const hasValidComment = s.comment && s.comment.trim().length >= 10;
       return s.isFailed && !hasValidComment;
     });
@@ -811,22 +863,21 @@ export class AuditService {
     // 3. Final Score Verification & Snapshotting Enforcement
     const { percent, isAutoFailed } = this.calculateScore(
       audit.formVersion.criteria,
-      dbScores,
+      relevantScores,
     );
 
-    await Promise.all(
-      dbScores.map((score) => {
-        if (!score.categoryLabel || !score.criterionTitle) {
-          return this.prisma.auditScore.update({
-            where: { id: score.id },
-            data: {
-              categoryLabel: score.criterion?.categoryName,
-              criterionTitle: score.criterion?.title,
-            },
-          });
-        }
-      }),
-    );
+    const updatePromises = relevantScores
+      .filter((score) => !score.categoryLabel || !score.criterionTitle)
+      .map((score) =>
+        this.prisma.auditScore.update({
+          where: { id: score.id },
+          data: {
+            categoryLabel: score.criterion?.categoryName,
+            criterionTitle: score.criterion?.title,
+          },
+        }),
+      );
+    await Promise.all(updatePromises);
 
     // 3. Official Submission -> Auto Release protocol
     const now = new Date();
@@ -964,7 +1015,7 @@ export class AuditService {
     return this.prisma.audit.update({
       where: { id },
       data: {
-        status: AuditStatus.ACKNOWLEDGED,
+        status: (AuditStatus as any).ACKNOWLEDGED,
         lastActionAt: new Date(),
       },
     });
@@ -982,16 +1033,96 @@ export class AuditService {
     });
   }
 
+  async discard(id: string, auditorId: string) {
+    const audit = await this.prisma.audit.findUnique({ where: { id } });
+    if (!audit) throw new NotFoundException('Audit not found');
+
+    if (audit.auditorId !== auditorId) {
+      throw new ForbiddenException('You can only discard your own audits');
+    }
+
+    // Allow discarding if IN_PROGRESS, DRAFT, failing validation etc.
+    // Basically anything that isn't already SUBMITTED/RELEASED etc.
+    const eligibleStatuses: AuditStatus[] = [
+      AuditStatus.IN_PROGRESS,
+      AuditStatus.DRAFT,
+    ];
+    if (!eligibleStatuses.includes(audit.status)) {
+      throw new BadRequestException(
+        'Only in-progress or draft audits can be discarded.',
+      );
+    }
+
+    return this.remove(id);
+  }
+
+  async discardAllByFormVersion(formId: string) {
+    const inProgressAudits = await this.prisma.audit.findMany({
+      where: {
+        formVersion: {
+          formId,
+        },
+        status: {
+          in: [AuditStatus.IN_PROGRESS, AuditStatus.DRAFT],
+        },
+      },
+      select: { id: true },
+    });
+
+    console.log(
+      `Discarding ${inProgressAudits.length} in-progress audits for form ${formId}`,
+    );
+
+    for (const audit of inProgressAudits) {
+      await this.remove(audit.id);
+    }
+
+    return { discardedCount: inProgressAudits.length };
+  }
+
   async remove(id: string) {
+    const audit = await this.prisma.audit.findUnique({ where: { id } });
+    if (!audit) throw new NotFoundException('Audit not found');
+
+    // Restore sampled ticket status if it exists
+    if (audit.sampledTicketId) {
+      try {
+        await this.prisma.sampledTicket.update({
+          where: { id: audit.sampledTicketId },
+          data: { status: 'READY' },
+        });
+      } catch (e) {
+        console.warn('Failed to reset sampled ticket status:', e);
+      }
+    }
+
+    // Clean up Dispute + Dispute Items
+    const dispute = await this.prisma.dispute.findUnique({
+      where: { auditId: id },
+    });
+    if (dispute) {
+      await this.prisma.disputeItem.deleteMany({
+        where: { disputeId: dispute.id },
+      });
+      await this.prisma.dispute.delete({ where: { auditId: id } });
+    }
+
+    // Clean up other scalar relational records
+    await this.prisma.releaseRecord.deleteMany({ where: { auditId: id } });
+    await this.prisma.auditEvent.deleteMany({ where: { auditId: id } });
+    await this.prisma.calibrationAnchor.deleteMany({ where: { auditId: id } });
+
+    // Unlink CalibrationTickets instead of deleting
+    await this.prisma.calibrationTicket.updateMany({
+      where: { auditId: id },
+      data: { auditId: null },
+    });
+
     await this.prisma.auditScore.deleteMany({ where: { auditId: id } });
     await this.prisma.auditFieldValue.deleteMany({ where: { auditId: id } });
-    try {
-      await (this.prisma as any).auditUserView.deleteMany({
-        where: { auditId: id },
-      });
-    } catch (e) {
-      console.warn('Failed to cleanup audit views (schema mismatch?):', e);
-    }
+
+    // Cleanup User Views
+    await this.prisma.auditUserView.deleteMany({ where: { auditId: id } });
 
     return this.prisma.audit.delete({
       where: { id },

@@ -122,7 +122,7 @@ export class CalibrationService {
       this.prisma.calibrationSession.findMany({
         where,
         include: {
-          campaign: { select: { id: true, name: true } },
+          campaign: { select: { id: true, name: true, projectCode: true } },
           createdBy: { select: { id: true, name: true } },
           _count: {
             select: {

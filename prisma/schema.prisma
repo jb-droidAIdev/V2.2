@@ -11,7 +11,6 @@ model User {
   id                         String                   @id @default(uuid())
   email                      String                   @unique
   name                       String
-  role                       Role
   createdAt                  DateTime                 @default(now())
   updatedAt                  DateTime                 @updatedAt
   password                   String                   @default("")
@@ -29,6 +28,7 @@ model User {
   lockoutUntil               DateTime?
   mustChangePassword         Boolean                  @default(true)
   roleId                     String?
+  role                       String
   auditsReceived             Audit[]                  @relation("Agent")
   auditsConducted            Audit[]                  @relation("Auditor")
   auditUserViews             AuditUserView[]
@@ -44,6 +44,7 @@ model User {
   uploadedBatches            TicketUploadBatch[]
   userRole                   UserRole?                @relation(fields: [roleId], references: [id])
   customPermissions          UserPermission[]
+  coachingConducted          CoachingLog[]            @relation("SupervisorCoaching")
 }
 
 model Campaign {
@@ -55,6 +56,7 @@ model Campaign {
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
   type                CampaignType         @default(USER)
+  projectCode         String?
   audits              Audit[]
   calibrationSessions CalibrationSession[] @relation("CampaignCalibrationSessions")
   qaAssignments       CampaignQA[]
@@ -68,12 +70,12 @@ model CampaignQA {
   id         String          @id @default(uuid())
   campaignId String
   userId     String
-  formId     String?         // Optional: pin to a specific form within this campaign
   isActive   Boolean         @default(true)
   assignedAt DateTime        @default(now())
+  formId     String?
   campaign   Campaign        @relation(fields: [campaignId], references: [id])
-  user       User            @relation(fields: [userId], references: [id])
   form       MonitoringForm? @relation(fields: [formId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
 
   @@unique([campaignId, userId])
 }
@@ -88,9 +90,13 @@ model MonitoringForm {
   teamName      String?
   isConfigured  Boolean                 @default(false)
   isArchived    Boolean                 @default(false)
+  dispositions  String[]                @default([])
+  qaAssignments CampaignQA[]
   campaign      Campaign?               @relation(fields: [campaignId], references: [id])
   versions      MonitoringFormVersion[]
-  qaAssignments CampaignQA[]
+
+  @@index([campaignId])
+  @@index([isArchived])
 }
 
 model MonitoringFormVersion {
@@ -108,6 +114,9 @@ model MonitoringFormVersion {
   criteria      FormCriterion[]
   creator       User?           @relation("FormVersionCreator", fields: [creatorId], references: [id])
   form          MonitoringForm  @relation(fields: [formId], references: [id])
+
+  @@index([formId])
+  @@index([isActive])
 }
 
 model FormCriterion {
@@ -201,9 +210,17 @@ model Audit {
   scores             AuditScore[]
   userViews          AuditUserView[]
   calibrationAnchors CalibrationAnchor[]
-  calibrationTickets CalibrationTicket[]
+  CalibrationTickets CalibrationTicket[]
   dispute            Dispute?
   releaseInfo        ReleaseRecord?
+  coachingLog        CoachingLog?
+
+  @@index([campaignId])
+  @@index([auditorId])
+  @@index([agentId])
+  @@index([status])
+  @@index([startedAt])
+  @@index([submittedAt])
 }
 
 model AuditUserView {
@@ -215,6 +232,7 @@ model AuditUserView {
   user     User     @relation(fields: [userId], references: [id])
 
   @@unique([auditId, userId])
+  @@index([userId])
 }
 
 model AuditFieldValue {
@@ -225,6 +243,7 @@ model AuditFieldValue {
   audit     Audit  @relation(fields: [auditId], references: [id])
 
   @@unique([auditId, fieldName])
+  @@index([auditId])
 }
 
 model AuditScore {
@@ -240,6 +259,7 @@ model AuditScore {
   criterion      FormCriterion @relation(fields: [criterionId], references: [id])
 
   @@unique([auditId, criterionId])
+  @@index([auditId])
 }
 
 model AuditEvent {
@@ -250,6 +270,9 @@ model AuditEvent {
   action    String
   metadata  Json?
   audit     Audit    @relation(fields: [auditId], references: [id])
+
+  @@index([auditId])
+  @@index([timestamp])
 }
 
 model ReleaseRecord {
@@ -487,6 +510,11 @@ model UserPermission {
   @@id([userId, permissionId])
 }
 
+model RoleTemplate {
+  id   String @id @default(uuid())
+  role Role
+}
+
 enum Role {
   AGENT
   QA
@@ -553,4 +581,18 @@ enum CalibrationAnchorStatus {
   VALIDATED
   REJECTED
   NON_MATCHING
+}
+model CoachingLog {
+  id                String    @id @default(uuid())
+  auditId           String    @unique
+  supervisorId      String
+  releasedAt        DateTime?
+  supervisorRemarks String?   @db.Text
+  actionPlan        Json?     // Array of { activity, owner, deadline, successMeasurement, goal }
+  agentCommitment   String?   @db.Text
+  agentAckAt        DateTime?
+  audit             Audit     @relation(fields: [auditId], references: [id])
+  supervisor        User      @relation("SupervisorCoaching", fields: [supervisorId], references: [id])
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 }

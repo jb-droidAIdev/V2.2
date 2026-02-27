@@ -1,55 +1,65 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class FormsService {
-  constructor(private prisma: PrismaService) { }
+  constructor(
+    private prisma: PrismaService,
+    private auditService: AuditService,
+  ) {}
 
   async findAll(archived: boolean = false) {
-    const forms = await this.prisma.monitoringForm.findMany({
-      where: { isArchived: archived },
-      include: {
-        campaign: true,
-        versions: {
-          where: { isActive: true },
-          include: {
-            creator: {
-              select: { name: true, email: true },
-            },
-            _count: {
-              select: {
-                audits: true,
-                criteria: true,
+    try {
+      const forms = await this.prisma.monitoringForm.findMany({
+        where: { isArchived: archived },
+        include: {
+          campaign: true,
+          versions: {
+            where: { isActive: true },
+            include: {
+              creator: {
+                select: { name: true, email: true },
+              },
+              _count: {
+                select: {
+                  audits: true,
+                  criteria: true,
+                },
               },
             },
+            take: 1,
           },
-          take: 1,
+          _count: {
+            select: { versions: true },
+          },
         },
-        _count: {
-          select: { versions: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+      });
 
-    // We also need to check if ANY version of the form has audits
-    const formsWithAuditStatus = await Promise.all(
-      forms.map(async (form) => {
-        const auditCount = await this.prisma.audit.count({
+      // Narrow audit check to only displayed forms
+      const idsWithAudits = new Set();
+      if (forms.length > 0) {
+        const auditCheck = await this.prisma.monitoringForm.findMany({
           where: {
-            formVersion: {
-              formId: form.id,
+            id: { in: forms.map((f) => f.id) },
+            versions: {
+              some: { audits: { some: {} } },
             },
           },
+          select: { id: true },
         });
-        return {
-          ...form,
-          hasAudits: auditCount > 0,
-        };
-      }),
-    );
+        auditCheck.forEach((f) => idsWithAudits.add(f.id));
+      }
 
-    return formsWithAuditStatus;
+      return forms.map((form) => ({
+        ...form,
+        hasAudits: idsWithAudits.has(form.id),
+      }));
+    } catch (error) {
+      console.error('FormsService.findAll Error:', error);
+      throw error;
+    }
   }
 
   async getDrafts() {
@@ -206,6 +216,7 @@ export class FormsService {
     name: string;
     description?: string;
     assignedUserIds?: string[];
+    dispositions?: string[];
   }) {
     if (!data.name?.trim()) throw new Error('Form name is required');
 
@@ -251,6 +262,7 @@ export class FormsService {
           campaignId: targetCampaignId,
           description: data.description,
           isConfigured: false,
+          dispositions: data.dispositions || [],
         },
       });
 
@@ -399,11 +411,16 @@ export class FormsService {
     });
     if (!version) throw new Error('Version not found');
 
+    // 1. Discard all in-progress audits for this form before activating new version
+    await this.auditService.discardAllByFormVersion(version.formId);
+
+    // 2. Deactivate other versions
     await this.prisma.monitoringFormVersion.updateMany({
       where: { formId: version.formId },
       data: { isActive: false },
     });
 
+    // 3. Activate this version
     return this.prisma.monitoringForm.update({
       where: { id: version.formId },
       data: {
@@ -574,6 +591,7 @@ export class FormsService {
         campaignId: data.campaignId || null,
         teamName: data.teamName || sourceForm.teamName, // Use provided teamName or fallback to source
         isConfigured: true,
+        dispositions: sourceForm.dispositions || [],
         description: `Duplicated from ${sourceForm.name}`,
       },
     });

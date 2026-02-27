@@ -1,4 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
 import { User, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
@@ -6,7 +10,7 @@ import * as bcrypt from 'bcrypt';
 @Injectable()
 // Refreshing types
 export class UsersService {
-  constructor(private prisma: PrismaService) { }
+  constructor(private prisma: PrismaService) {}
 
   async findByName(name: string): Promise<User | null> {
     if (!name) return null;
@@ -63,14 +67,8 @@ export class UsersService {
     });
   }
 
-  async findAll(user?: any) {
+  async findAll(user?: any, options?: { limit?: number; offset?: number }) {
     try {
-      console.log(
-        'UsersService.findAll initiated by:',
-        user?.email,
-        'Role:',
-        user?.role,
-      );
       const where: any = { isActive: true };
 
       const userRoleStr = String(user?.role || '').toUpperCase();
@@ -83,9 +81,8 @@ export class UsersService {
         'SDM',
       ].includes(userRoleStr);
 
-      // RBAC: TLs see their own team + any campaign they are assigned to
+      // RBAC: Non-admin management roles see only users from their assigned campaigns
       if (user && isManagerOrQA && userRoleStr !== 'ADMIN') {
-        console.log('Applying filters for Manager/QA role');
         const assignments = await this.prisma.campaignQA.findMany({
           where: { userId: user.id },
           include: { campaign: true },
@@ -95,11 +92,10 @@ export class UsersService {
         where.OR = [
           { employeeTeam: user.employeeTeam },
           { employeeTeam: { in: campaignNames } },
-          { role: { in: ['QA', 'QA_TL'] } }, // Allow seeing the QA staff folder in Dossier
         ];
       }
 
-      const results = await this.prisma.user.findMany({
+      const queryOptions: any = {
         where,
         select: {
           id: true,
@@ -118,9 +114,17 @@ export class UsersService {
           createdAt: true,
         },
         orderBy: { name: 'asc' },
-      });
-      console.log(`UsersService.findAll returning ${results.length} users`);
-      return results;
+      };
+
+      if (options?.limit) {
+        queryOptions.take = Number(options.limit);
+        queryOptions.skip = Number(options.offset || 0);
+      }
+
+      const results = await this.prisma.user.findMany(queryOptions);
+      const total = await this.prisma.user.count({ where });
+
+      return options?.limit ? { data: results, total } : results;
     } catch (error) {
       console.error('CRITICAL: UsersService.findAll Error:', error);
       throw error;
@@ -161,9 +165,12 @@ export class UsersService {
       where: { name: targetRole },
     });
 
-    // Sanitize string fields
+    // Sanitize string fields and exclude internal keys
     const sanitizedData = Object.entries(userData).reduce(
       (acc, [key, value]) => {
+        // Exclude internal fields that shouldn't be set manually during create
+        if (['id', 'createdAt', 'updatedAt'].includes(key)) return acc;
+
         if (typeof value === 'string') {
           acc[key] = value.trim();
         } else {
@@ -286,10 +293,22 @@ export class UsersService {
       },
       select: {
         employeeTeam: true,
+        projectCode: true,
       },
-      distinct: ['employeeTeam'],
     });
-    return teams.map((t) => t.employeeTeam).filter(Boolean);
+
+    // Group by team and pick first projectCode
+    const teamMap = new Map<string, string | null>();
+    teams.forEach((t) => {
+      if (t.employeeTeam && !teamMap.has(t.employeeTeam)) {
+        teamMap.set(t.employeeTeam, t.projectCode || null);
+      }
+    });
+
+    return Array.from(teamMap.entries()).map(([name, projectCode]) => ({
+      name,
+      projectCode,
+    }));
   }
 
   async updateLoginMetadata(
@@ -317,22 +336,6 @@ export class UsersService {
     });
   }
 
-  async resetToDefaultPassword(id: string) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user) throw new Error('User not found');
-
-    const defaultPassword = `Fws@${user.eid || '12345'}`;
-    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
-
-    return this.prisma.user.update({
-      where: { id },
-      data: {
-        password: hashedPassword,
-        mustChangePassword: true,
-      },
-    });
-  }
-
   async remove(id: string) {
     return this.prisma.user.delete({
       where: { id },
@@ -346,6 +349,16 @@ export class UsersService {
     });
   }
 
+  async bulkResetRole(roleName: string) {
+    return this.prisma.user.updateMany({
+      where: { role: roleName },
+      data: {
+        role: Role.AGENT,
+        employeeTeam: 'Unassigned',
+      },
+    });
+  }
+
   // Scoped update — only sets employeeTeam, used by CAMPAIGN_MANAGE endpoints
   async assignUsersToTeam(userIds: string[], teamName: string) {
     return this.prisma.user.updateMany({
@@ -356,11 +369,12 @@ export class UsersService {
 
   async updateUser(id: string, data: any) {
     // If role is being updated, we must update the roleId mapping
-    const updateData = { ...data };
+    const { id: _, createdAt, updatedAt, ...allowedData } = data;
+    const updateData = { ...allowedData };
 
-    if (data.role) {
+    if (allowedData.role) {
       const userRole = await this.prisma.userRole.findUnique({
-        where: { name: data.role },
+        where: { name: allowedData.role },
       });
       if (userRole) {
         updateData.roleId = userRole.id;
@@ -368,10 +382,10 @@ export class UsersService {
     }
 
     // Handle password update if provided
-    if (data.password && data.password.trim() !== '') {
-      updateData.password = await bcrypt.hash(data.password, 10);
+    if (allowedData.password && allowedData.password.trim() !== '') {
+      updateData.password = await bcrypt.hash(allowedData.password, 10);
       // Default to forcing a change if set via general update (admin action)
-      updateData.mustChangePassword = data.mustChangePassword ?? true;
+      updateData.mustChangePassword = allowedData.mustChangePassword ?? true;
     } else {
       // Remove empty password from update to avoid overwriting with empty string
       delete updateData.password;
@@ -391,6 +405,61 @@ export class UsersService {
         },
       },
       orderBy: { name: 'asc' },
+    });
+  }
+
+  async createRole(name: string, description?: string) {
+    return this.prisma.userRole.create({
+      data: {
+        name,
+        description,
+        isSystem: false,
+      },
+      include: {
+        permissions: {
+          include: { permission: true },
+        },
+      },
+    });
+  }
+
+  async deleteRole(roleId: string) {
+    const role = await this.prisma.userRole.findUnique({
+      where: { id: roleId },
+      include: { users: true },
+    });
+
+    if (!role) throw new NotFoundException('Role not found');
+    if (role.isSystem)
+      throw new BadRequestException('Cannot delete system roles');
+    if (role.users.length > 0)
+      throw new BadRequestException('Cannot delete role with assigned users');
+
+    return this.prisma.userRole.delete({
+      where: { id: roleId },
+    });
+  }
+
+  async updateRole(
+    roleId: string,
+    data: { name?: string; description?: string },
+  ) {
+    const role = await this.prisma.userRole.findUnique({
+      where: { id: roleId },
+    });
+
+    if (!role) throw new NotFoundException('Role not found');
+    if (role.isSystem && data.name && data.name !== role.name)
+      throw new BadRequestException('Cannot rename system roles');
+
+    return this.prisma.userRole.update({
+      where: { id: roleId },
+      data,
+      include: {
+        permissions: {
+          include: { permission: true },
+        },
+      },
     });
   }
 
@@ -425,18 +494,29 @@ export class UsersService {
   }
 
   async getAssignedCampaigns(userId: string) {
-    const assignments = await this.prisma.campaignQA.findMany({
-      where: { userId },
-      include: {
-        campaign: true,
-        form: { select: { id: true, name: true } },
-      },
-    });
-    return assignments.map((a) => ({
-      ...a.campaign,
-      assignedFormId: a.formId || null,
-      assignedFormName: a.form?.name || null,
-    }));
+    try {
+      const assignments = await this.prisma.campaignQA.findMany({
+        where: { userId },
+        include: {
+          campaign: true,
+          form: { select: { id: true, name: true } },
+        },
+      });
+
+      return assignments
+        .filter((a) => a.campaign !== null) // Safety check: Skip orphaned assignments
+        .map((a) => ({
+          ...a.campaign,
+          assignedFormId: a.formId || null,
+          assignedFormName: a.form?.name || null,
+        }));
+    } catch (error) {
+      console.error(
+        `Error fetching assigned campaigns for user ${userId}:`,
+        error,
+      );
+      throw error;
+    }
   }
 
   async assignCampaigns(

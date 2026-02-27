@@ -17,8 +17,8 @@ import { MailModule } from './modules/mail/mail.module';
 
 import { GlobalModule } from './global.module';
 import { UsersModule } from './modules/users/users.module';
-
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+
 @Module({
   imports: [
     GlobalModule,
@@ -41,4 +41,4 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule { }

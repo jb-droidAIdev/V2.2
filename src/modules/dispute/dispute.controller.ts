@@ -9,23 +9,25 @@ import {
   Request,
 } from '@nestjs/common';
 import { DisputeService } from './dispute.service';
-import { AuthGuard } from '@nestjs/passport';
-import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../auth/roles.decorator';
-import { Role } from '@prisma/client';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { PermissionsGuard } from '../auth/permissions/permissions.guard';
+import { Permissions } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permissions.service';
 
 @Controller('disputes')
-@UseGuards(AuthGuard('jwt'), RolesGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 export class DisputeController {
   constructor(private readonly disputeService: DisputeService) {}
 
-  @Roles(Role.OPS_TL, Role.OPS_MANAGER, Role.QA_MANAGER, Role.SDM, Role.ADMIN)
+  // File a new dispute — requires DISPUTE_CREATE
+  @Permissions(Permission.DISPUTE_CREATE)
   @Post()
   create(@Body() body: any, @Request() req: any) {
     return this.disputeService.createDispute(body.auditId, req.user.id, body);
   }
 
-  @Roles(Role.QA, Role.QA_TL, Role.QA_MANAGER, Role.ADMIN)
+  // QA issues accept/reject verdict — requires DISPUTE_RESOLVE
+  @Permissions(Permission.DISPUTE_RESOLVE)
   @Patch(':id/qa-verdict')
   qaVerdict(@Param('id') id: string, @Body() body: any, @Request() req: any) {
     return this.disputeService.qaVerdict(id, req.user.id, body.itemId, {
@@ -34,13 +36,15 @@ export class DisputeController {
     });
   }
 
-  @Roles(Role.OPS_TL, Role.OPS_MANAGER, Role.QA_MANAGER, Role.SDM, Role.ADMIN)
+  // Supervisor re-appeals a rejected verdict — requires DISPUTE_REAPPEAL
+  @Permissions(Permission.DISPUTE_REAPPEAL)
   @Post(':id/reappeal')
   reappeal(@Param('id') id: string, @Body() body: any, @Request() req: any) {
     return this.disputeService.reappeal(id, req.user.id, body);
   }
 
-  @Roles(Role.QA_TL, Role.ADMIN)
+  // QA TL issues the final binding verdict — requires DISPUTE_FINAL_VERDICT
+  @Permissions(Permission.DISPUTE_FINAL_VERDICT)
   @Patch(':id/final-verdict')
   finalVerdict(
     @Param('id') id: string,
@@ -53,13 +57,13 @@ export class DisputeController {
     });
   }
 
-  @UseGuards(AuthGuard('jwt'))
+  // List all disputes — any authenticated user (service scopes results)
   @Get()
   findAll() {
     return this.disputeService.findAll();
   }
 
-  @UseGuards(AuthGuard('jwt'))
+  // Disputes for a specific audit — any authenticated user
   @Get('audit/:auditId')
   findByAudit(@Param('auditId') auditId: string) {
     return this.disputeService.findByAudit(auditId);

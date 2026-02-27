@@ -21,7 +21,7 @@ import { Permission } from '../auth/permissions/permissions.service';
 @Controller('campaigns')
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
 export class CampaignsController {
-  constructor(private readonly campaignsService: CampaignsService) { }
+  constructor(private readonly campaignsService: CampaignsService) {}
 
   @UseGuards(JwtAuthGuard)
   @Get()

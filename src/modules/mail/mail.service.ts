@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import { join } from 'path';
 
 @Injectable()
 export class MailService {
@@ -26,13 +27,30 @@ export class MailService {
     text?: string,
   ) {
     try {
+      // Resolve path to the logo in frontend public folder
+      const logoPath = join(
+        process.cwd(),
+        '..',
+        'frontend',
+        'public',
+        'logo.png',
+      );
+
       const info = await this.transporter.sendMail({
-        from: process.env.SMTP_FROM || '"QMS Support" <support@qms.local>',
+        from:
+          process.env.SMTP_FROM || '"QMS Support" <mailer@flatworld.com.ph>',
         to,
         cc,
         subject,
         text: text || html.replace(/<[^>]*>?/gm, ''),
         html,
+        attachments: [
+          {
+            filename: 'logo.png',
+            path: logoPath,
+            cid: 'flatworld_logo', // must match the src="cid:flatworld_logo" in HTML
+          },
+        ],
       });
 
       this.logger.log(`Email sent: ${info.messageId}`);
@@ -50,12 +68,58 @@ export class MailService {
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>${title || 'QMS Notification'}</title>
+        <title>${title || 'Quality Monitoring System'}</title>
       </head>
-      <body style="margin: 0; padding: 40px; color: #000000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 16px; line-height: 1.6; background-color: #ffffff;">
-        <div style="max-width: 600px;">
-          ${content}
-        </div>
+      <body style="margin: 0; padding: 0; background-color: #f8fafc; color: #ffffff; font-family: Roboto, 'Segoe UI', Helvetica, Arial, sans-serif; font-size: 18px; line-height: 1.6;">
+        <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f8fafc; width: 100%;">
+          <tr>
+            <td align="center" style="padding: 60px 15px;">
+              <!-- Container Card -->
+              <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 700px; background-color: #0f172a; border-radius: 24px; overflow: hidden; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);">
+                <tr>
+                  <td style="padding: 60px;">
+                    <!-- Content Area -->
+                    <div style="width: 100%;">
+                      ${content}
+                    </div>
+
+                    <!-- Branded Signature -->
+                    <div style="margin-top: 60px; border-top: 1px solid #1e293b; padding-top: 40px; text-align: left;">
+                      <p style="color: #94a3b8; font-size: 18px; line-height: 1.5; margin: 0; font-weight: 500;">Best,</p>
+                      <p style="color: #ffffff; font-size: 18px; line-height: 1.5; margin: 0; font-weight: 700;">QMS Support</p>
+                      
+                      <!-- Spacer below QMS Support equivalent to ~3 lines (approx 3 * 18 * 1.5 = ~80px) -->
+                      <div style="height: 80px;"></div>
+                      
+                      <div>
+                        <!-- Using CID attachment for reliable loading -->
+                        <img src="cid:flatworld_logo" alt="Flatworld" width="521" height="167" style="display: block; width: 521px; height: 167px; max-width: 100%; height: auto;">
+                      </div>
+                      
+                      <!-- Spacer below logo equivalent to ~3 lines -->
+                      <div style="height: 80px;"></div>
+                      
+                      <p style="color: #E21E26; font-size: 12px; margin: 0; letter-spacing: 1px; font-weight: 600; text-transform: uppercase; text-align: center;">
+                        QUALITY MONITORING SYSTEM NETWORK • CONFIDENTIALITY NOTICE
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              </table>
+              
+              <!-- Simple Footer -->
+              <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 700px;">
+                <tr>
+                  <td style="padding: 30px 10px; text-align: center;">
+                    <p style="color: #94a3b8; font-size: 12px; margin: 0;">
+                      &copy; 2026 Quality Monitoring System. All rights reserved.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
       </body>
       </html>
     `;
@@ -247,5 +311,63 @@ export class MailService {
       html,
       data.cc,
     );
+  }
+
+  async sendPasswordResetEmail(data: { to: string; resetLink: string }) {
+    const content = `
+      <div style="text-align: center; margin-bottom: 40px;">
+        <h1 style="color: #ffffff; font-size: 32px; font-weight: 900; letter-spacing: -1.5px; margin: 0; text-transform: uppercase;">
+          QUALITY MONITORING SYSTEM
+        </h1>
+        <div style="height: 4px; width: 40px; background-color: #E21E26; margin: 15px auto;"></div>
+        <p style="color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: 3px; font-weight: 700;">Security & Identity Portal</p>
+      </div>
+
+      <h2 style="color: #ffffff; font-size: 24px; font-weight: 800; margin-bottom: 24px; text-align: left; letter-spacing: -0.5px;">Account Credential Reset</h2>
+      
+      <p style="color: #cbd5e1; line-height: 1.8; font-size: 17px; text-align: left; margin-bottom: 35px;">
+        A request has been initiated to reset your <strong>Management Portal</strong> credentials. This action requires authorization via the secure gateway below:
+      </p>
+
+      <div style="text-align: center; margin: 45px 0;">
+        <a href="${data.resetLink}" style="background-color: #E21E26; color: #ffffff; padding: 20px 45px; border-radius: 16px; text-decoration: none; font-weight: 800; font-size: 18px; display: inline-block; box-shadow: 0 10px 30px rgba(226, 30, 38, 0.4); border: 1px solid rgba(255, 255, 255, 0.1);">
+          Update Password
+        </a>
+      </div>
+
+      <div style="background-color: rgba(2, 6, 23, 0.4); border-left: 4px solid #E21E26; padding: 20px; border-radius: 8px; margin-bottom: 35px;">
+        <p style="color: #E21E26; font-size: 14px; margin: 0; font-weight: 600;">
+          <strong>Security Protocol:</strong> This link is strictly single-use and will expire in 30 minutes.
+        </p>
+      </div>
+
+      <div style="padding: 0;">
+        <p style="color: #ffffff; font-size: 17px; line-height: 1.6; text-align: left; font-style: italic;">
+          If you did not authorize this request, your account remains secured with your existing credentials. No further action is required.
+        </p>
+      </div>
+    `;
+
+    const html = this.getBaseTemplate(content, 'Security Reset');
+    return this.sendMail(data.to, 'QMS: Password Reset Authorization', html);
+  }
+
+  async sendCoachingReleasedToAgent(data: {
+    to: string;
+    agentName: string;
+    ticketId: string;
+    supervisorName: string;
+  }) {
+    const content = `
+      <p>Hello ${data.agentName},</p>
+      <p>A new Coaching Log has been released by ${data.supervisorName} regarding Ticket #${data.ticketId}.</p>
+      <p>Please log in to the system, review the opportunity summary and action plan, and provide your detailed commitment for improvement.</p>
+      <p><a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/audits" style="text-decoration: none; color: #0000EE;">[ Click here to view the Coaching Log ]</a></p>
+      <p style="color: #666666;">"Do not reply to this email"</p>
+    `;
+
+    const html = this.getBaseTemplate(content, 'New Coaching Log Released');
+    const subject = `📢 Release: Coaching Log for Ticket #${data.ticketId}`;
+    return this.sendMail(data.to, subject, html);
   }
 }

@@ -8,38 +8,43 @@ import {
   Delete,
   UseGuards,
   Request,
-  ForbiddenException,
   Query,
 } from '@nestjs/common';
 import { AuditService } from './audit.service';
-import { AuthGuard } from '@nestjs/passport';
-import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../auth/roles.decorator';
-import { Role } from '@prisma/client';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { PermissionsGuard } from '../auth/permissions/permissions.guard';
+import { Permissions } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permissions.service';
 
 @Controller('audits')
-@UseGuards(AuthGuard('jwt'), RolesGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 export class AuditController {
   constructor(private readonly auditService: AuditService) {}
 
-  @UseGuards(AuthGuard('jwt'))
+  // Any authenticated user can check their own active audit
   @Get('active')
   getActive(@Request() req: any) {
     return this.auditService.getActiveAudit(req.user.id);
   }
 
+  // Viewing audits — scoped by AUDIT_VIEW_ALL, otherwise returns own/team audits
   @Get()
-  findAll(@Request() req: any) {
-    return this.auditService.findAll(req.user);
+  findAll(
+    @Request() req: any,
+    @Query('limit') limit?: number,
+    @Query('offset') offset?: number,
+  ) {
+    return this.auditService.findAll(req.user, { limit, offset });
   }
 
-  @UseGuards(AuthGuard('jwt'))
+  // Fail log — any authenticated user (scoped inside service)
   @Get('failures')
   getFailures(@Request() req: any, @Query() query: any) {
     return this.auditService.getFailures(req.user, query);
   }
 
-  @Roles(Role.QA, Role.QA_TL, Role.ADMIN)
+  // Start a sampled audit — requires AUDIT_CREATE
+  @Permissions(Permission.AUDIT_CREATE)
   @Post('start/:sampledTicketId')
   start(
     @Param('sampledTicketId') sampledTicketId: string,
@@ -55,7 +60,8 @@ export class AuditController {
     );
   }
 
-  @Roles(Role.QA, Role.QA_TL, Role.ADMIN)
+  // Create a manual audit — requires AUDIT_CREATE
+  @Permissions(Permission.AUDIT_CREATE)
   @Post('manual')
   createManual(@Body() body: any, @Request() req: any) {
     return this.auditService.createManualAudit({
@@ -64,31 +70,40 @@ export class AuditController {
     });
   }
 
-  @UseGuards(AuthGuard('jwt'))
+  // View a single audit — any authenticated user (service enforces ownership)
   @Get(':id')
   findOne(@Param('id') id: string, @Request() req: any) {
-    return this.auditService.findOne(id, req.user.id);
+    return this.auditService.findOne(id, req.user);
   }
 
-  @UseGuards(AuthGuard('jwt'))
+  // Autosave in-progress audit — any authenticated auditor
   @Patch(':id/autosave')
   autosave(@Param('id') id: string, @Body() body: any, @Request() req: any) {
     return this.auditService.autosave(id, req.user.id, body);
   }
 
-  @UseGuards(AuthGuard('jwt'))
+  // Submit a completed audit — requires AUDIT_CREATE
+  @Permissions(Permission.AUDIT_CREATE)
   @Post(':id/submit')
   submit(@Param('id') id: string, @Request() req: any) {
     return this.auditService.submit(id, req.user.id);
   }
 
-  @UseGuards(AuthGuard('jwt'))
+  // Discard an in-progress audit
+  @Post(':id/discard')
+  discard(@Param('id') id: string, @Request() req: any) {
+    return this.auditService.discard(id, req.user.id);
+  }
+
+  // Acknowledge an audit result — requires AUDIT_ACKNOWLEDGE
+  @Permissions(Permission.AUDIT_ACKNOWLEDGE)
   @Post(':id/acknowledge')
   acknowledge(@Param('id') id: string, @Request() req: any) {
     return this.auditService.acknowledgeAudit(id, req.user.id);
   }
 
-  @Roles(Role.ADMIN)
+  // Delete an audit — requires AUDIT_DELETE
+  @Permissions(Permission.AUDIT_DELETE)
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.auditService.remove(id);

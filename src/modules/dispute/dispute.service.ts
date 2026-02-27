@@ -550,7 +550,7 @@ export class DisputeService {
         audit: {
           include: {
             agent: { select: { name: true, eid: true } },
-            campaign: { select: { name: true } },
+            campaign: { select: { name: true, projectCode: true } },
             sampledTicket: { include: { ticket: true } },
           },
         },

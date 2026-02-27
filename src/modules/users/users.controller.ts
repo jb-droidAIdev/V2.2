@@ -8,6 +8,9 @@ import {
   Body,
   Delete,
   Patch,
+  NotFoundException,
+  BadRequestException,
+  Query,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { AuthGuard } from '@nestjs/passport';
@@ -19,7 +22,7 @@ import { Permission } from '../auth/permissions/permissions.service';
 @Controller('users')
 @UseGuards(AuthGuard('jwt'), RolesGuard, PermissionsGuard)
 export class UsersController {
-  constructor(private readonly usersService: UsersService) { }
+  constructor(private readonly usersService: UsersService) {}
 
   @UseGuards(AuthGuard('jwt'))
   @Permissions(Permission.USER_MANAGE)
@@ -38,16 +41,42 @@ export class UsersController {
   @UseGuards(AuthGuard('jwt'))
   @Permissions(Permission.USER_MANAGE)
   @Patch('config/roles/:id')
-  async updateRolePermissions(
+  async updateRoleConfig(
     @Param('id') id: string,
-    @Body() body: { permissions: string[] },
+    @Body()
+    body: { permissions?: string[]; name?: string; description?: string },
   ) {
-    return this.usersService.updateRolePermissions(id, body.permissions);
+    if (body.permissions) {
+      return this.usersService.updateRolePermissions(id, body.permissions);
+    }
+    return this.usersService.updateRole(id, {
+      name: body.name,
+      description: body.description,
+    });
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Permissions(Permission.USER_MANAGE)
+  @Post('config/roles')
+  async createRole(@Body() body: { name: string; description?: string }) {
+    if (!body.name) throw new BadRequestException('Role name is required');
+    return this.usersService.createRole(body.name, body.description);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Permissions(Permission.USER_MANAGE)
+  @Delete('config/roles/:id')
+  async deleteRole(@Param('id') id: string) {
+    return this.usersService.deleteRole(id);
   }
 
   @Get()
-  async findAll(@Req() req: any) {
-    return this.usersService.findAll(req.user);
+  async findAll(
+    @Req() req: any,
+    @Query('limit') limit?: number,
+    @Query('offset') offset?: number,
+  ) {
+    return this.usersService.findAll(req.user, { limit, offset });
   }
 
   @UseGuards(AuthGuard('jwt'))
@@ -98,6 +127,13 @@ export class UsersController {
   }
 
   @UseGuards(AuthGuard('jwt'))
+  @Permissions(Permission.USER_MANAGE)
+  @Post('config/roles/bulk-reset')
+  async bulkResetRole(@Body() body: { roleName: string }) {
+    return this.usersService.bulkResetRole(body.roleName);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
   @Permissions(Permission.USER_MANAGE, Permission.CAMPAIGN_MANAGE)
   @Patch(':id')
   async update(@Param('id') id: string, @Body() data: any) {
@@ -115,7 +151,11 @@ export class UsersController {
   @Post(':id/campaigns')
   async updateCampaigns(
     @Param('id') id: string,
-    @Body() body: { campaignIds?: string[]; assignments?: { campaignId: string; formId?: string | null }[] },
+    @Body()
+    body: {
+      campaignIds?: string[];
+      assignments?: { campaignId: string; formId?: string | null }[];
+    },
   ) {
     // Support both legacy format (campaignIds[]) and new format (assignments[{campaignId, formId}])
     const assignments =
@@ -125,9 +165,9 @@ export class UsersController {
   }
 
   @UseGuards(AuthGuard('jwt'))
-  @Permissions(Permission.USER_MANAGE, Permission.USER_RESET_PASSWORD)
-  @Post(':id/reset-password')
-  async resetPassword(@Param('id') id: string) {
-    return this.usersService.resetToDefaultPassword(id);
+  @Permissions(Permission.USER_MANAGE)
+  @Delete(':id')
+  async remove(@Param('id') id: string) {
+    return this.usersService.remove(id);
   }
 }

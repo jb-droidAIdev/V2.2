@@ -351,9 +351,10 @@ export class UsersService {
 
   async bulkResetRole(roleName: string) {
     return this.prisma.user.updateMany({
-      where: { role: roleName },
+      where: { role: roleName as any },
       data: {
-        role: Role.AGENT,
+        role: '' as any,
+        roleId: null,
         employeeTeam: 'Unassigned',
       },
     });
@@ -361,10 +362,29 @@ export class UsersService {
 
   // Scoped update — only sets employeeTeam, used by CAMPAIGN_MANAGE endpoints
   async assignUsersToTeam(userIds: string[], teamName: string) {
-    return this.prisma.user.updateMany({
+    // 1. Always update employeeTeam
+    const updateResult = await this.prisma.user.updateMany({
       where: { id: { in: userIds } },
       data: { employeeTeam: teamName },
     });
+
+    // 2. Dynamic Role Sync: If teamName is a known management role, update user roles too
+    // This allows the "Add Member" action in Dossier (Admin View) to correctly set permissions
+    const targetRole = await this.prisma.userRole.findUnique({
+      where: { name: teamName },
+    });
+
+    if (targetRole && teamName !== 'AGENT') {
+      await this.prisma.user.updateMany({
+        where: { id: { in: userIds } },
+        data: {
+          role: teamName as any,
+          roleId: targetRole.id,
+        },
+      });
+    }
+
+    return updateResult;
   }
 
   async updateUser(id: string, data: any) {
@@ -372,12 +392,21 @@ export class UsersService {
     const { id: _, createdAt, updatedAt, ...allowedData } = data;
     const updateData = { ...allowedData };
 
-    if (allowedData.role) {
-      const userRole = await this.prisma.userRole.findUnique({
-        where: { name: allowedData.role },
-      });
-      if (userRole) {
-        updateData.roleId = userRole.id;
+    if (allowedData.role !== undefined) {
+      if (allowedData.role === '') {
+        updateData.roleId = null;
+        updateData.employeeTeam = 'Unassigned';
+      } else {
+        const userRole = await this.prisma.userRole.findUnique({
+          where: { name: allowedData.role },
+        });
+        if (userRole) {
+          updateData.roleId = userRole.id;
+          // Synchronize Team with Role for management users
+          if (allowedData.role !== 'AGENT') {
+            updateData.employeeTeam = allowedData.role;
+          }
+        }
       }
     }
 
@@ -426,14 +455,21 @@ export class UsersService {
   async deleteRole(roleId: string) {
     const role = await this.prisma.userRole.findUnique({
       where: { id: roleId },
-      include: { users: true },
     });
 
     if (!role) throw new NotFoundException('Role not found');
     if (role.isSystem)
       throw new BadRequestException('Cannot delete system roles');
-    if (role.users.length > 0)
-      throw new BadRequestException('Cannot delete role with assigned users');
+
+    // Automatically migrate users to empty role and Unassigned team before deletion
+    await this.prisma.user.updateMany({
+      where: { roleId: role.id },
+      data: {
+        role: '' as any,
+        roleId: null,
+        employeeTeam: 'Unassigned',
+      },
+    });
 
     return this.prisma.userRole.delete({
       where: { id: roleId },
@@ -451,6 +487,17 @@ export class UsersService {
     if (!role) throw new NotFoundException('Role not found');
     if (role.isSystem && data.name && data.name !== role.name)
       throw new BadRequestException('Cannot rename system roles');
+
+    // 1. If name changes, we MUST update all users' role and employeeTeam strings
+    if (data.name && data.name !== role.name) {
+      await this.prisma.user.updateMany({
+        where: { roleId: role.id },
+        data: {
+          role: data.name as any,
+          employeeTeam: data.name,
+        },
+      });
+    }
 
     return this.prisma.userRole.update({
       where: { id: roleId },
@@ -500,10 +547,10 @@ export class UsersService {
         include: {
           campaign: true,
           form: { select: { id: true, name: true } },
-        },
+        } as any,
       });
 
-      return assignments
+      return (assignments as any[])
         .filter((a) => a.campaign !== null) // Safety check: Skip orphaned assignments
         .map((a) => ({
           ...a.campaign,

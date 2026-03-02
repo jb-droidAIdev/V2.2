@@ -13,7 +13,7 @@ export class AuditService {
   constructor(
     private prisma: PrismaService,
     private mailService: MailService,
-  ) {}
+  ) { }
 
   async getActiveAudit(auditorId: string) {
     const audit = await this.prisma.audit.findFirst({
@@ -887,10 +887,10 @@ export class AuditService {
     const updatedAudit = await this.prisma.audit.update({
       where: { id },
       data: {
-        status: AuditStatus.RELEASED,
+        status: Math.round(percent) === 100 ? (AuditStatus as any).ACKNOWLEDGED : AuditStatus.RELEASED,
         submittedAt: now,
         releasedAt: now,
-        agentAckDeadline: deadline,
+        agentAckDeadline: Math.round(percent) === 100 ? null : deadline,
         score: percent,
         isAutoFailed,
         lastActionAt: now,

@@ -1,10 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
 import { Campaign } from '@prisma/client';
 
 @Injectable()
 export class CampaignsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async findAll(user?: any) {
     try {
@@ -63,12 +63,22 @@ export class CampaignsService {
   }
 
   async findAssigned(userId: string) {
+    if (!userId) {
+      console.warn('findAssigned called without userId');
+      return [];
+    }
+
     try {
       // Check if user is admin or above
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
         select: { role: true, name: true, employeeTeam: true },
       });
+
+      if (!user) {
+        console.warn('User not found in findAssigned:', userId);
+        return [];
+      }
 
       const isSuperAdmin = user && ['ADMIN', 'QA_MANAGER'].includes(user.role);
 
@@ -114,10 +124,13 @@ export class CampaignsService {
         });
       }
 
+      if (!campaigns) return [];
+
       return campaigns
         .filter((campaign: any) => {
+          if (!campaign) return false;
           const hasActiveDirectForm = (campaign.forms || []).length > 0;
-          const hasActiveTeamForm = activeTeamNames.has(campaign.name);
+          const hasActiveTeamForm = campaign.name && activeTeamNames.has(campaign.name);
           const isUserCampaign = campaign.type !== 'ADMIN';
           return (hasActiveDirectForm || hasActiveTeamForm) && isUserCampaign;
         })
@@ -125,16 +138,16 @@ export class CampaignsService {
           let scorecardName = campaign.forms?.[0]?.name;
           if (!scorecardName) {
             const teamForm = activeForms.find(
-              (f) => f.teamName === campaign.name,
+              (f) => f && f.teamName === campaign.name,
             );
             scorecardName = teamForm?.name;
           }
 
           return {
             id: campaign.id,
-            name: campaign.name,
-            projectCode: campaign.projectCode,
-            type: campaign.type,
+            name: campaign.name || 'Unnamed Campaign',
+            projectCode: campaign.projectCode || null,
+            type: campaign.type || 'USER',
             scorecardName: scorecardName || 'Generic',
           };
         });

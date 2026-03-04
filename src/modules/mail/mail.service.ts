@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
-import { join } from 'path';
 
 @Injectable()
 export class MailService {
@@ -27,15 +26,6 @@ export class MailService {
     text?: string,
   ) {
     try {
-      // Resolve path to the logo in frontend public folder
-      const logoPath = join(
-        process.cwd(),
-        '..',
-        'frontend',
-        'public',
-        'logo.png',
-      );
-
       const info = await this.transporter.sendMail({
         from:
           process.env.SMTP_FROM || '"QMS Support" <mailer@flatworld.com.ph>',
@@ -44,13 +34,6 @@ export class MailService {
         subject,
         text: text || html.replace(/<[^>]*>?/gm, ''),
         html,
-        attachments: [
-          {
-            filename: 'logo.png',
-            path: logoPath,
-            cid: 'flatworld_logo', // must match the src="cid:flatworld_logo" in HTML
-          },
-        ],
       });
 
       this.logger.log(`Email sent: ${info.messageId}`);
@@ -89,14 +72,6 @@ export class MailService {
                       <p style="color: #ffffff; font-size: 18px; line-height: 1.5; margin: 0; font-weight: 700;">QMS Support</p>
                       
                       <!-- Spacer below QMS Support equivalent to ~3 lines (approx 3 * 18 * 1.5 = ~80px) -->
-                      <div style="height: 80px;"></div>
-                      
-                      <div>
-                        <!-- Using CID attachment for reliable loading -->
-                        <img src="cid:flatworld_logo" alt="Flatworld" width="521" height="167" style="display: block; width: 521px; height: 167px; max-width: 100%; height: auto;">
-                      </div>
-                      
-                      <!-- Spacer below logo equivalent to ~3 lines -->
                       <div style="height: 80px;"></div>
                       
                       <p style="color: #E21E26; font-size: 12px; margin: 0; letter-spacing: 1px; font-weight: 600; text-transform: uppercase; text-align: center;">

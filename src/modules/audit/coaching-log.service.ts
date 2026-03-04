@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
 import { MailService } from '../mail/mail.service';
+import { AuditStatus } from '@prisma/client';
 import {
   CreateCoachingLogDto,
   UpdateCoachingLogDto,
@@ -15,7 +16,7 @@ export class CoachingLogService {
   constructor(
     private prisma: PrismaService,
     private mailService: MailService,
-  ) {}
+  ) { }
 
   async findByAuditId(auditId: string) {
     const log = await this.prisma.coachingLog.findUnique({
@@ -119,17 +120,29 @@ export class CoachingLogService {
   }
 
   async acknowledge(id: string, commitment: string) {
-    const log = await this.prisma.coachingLog.findUnique({ where: { id } });
+    const log = await this.prisma.coachingLog.findUnique({
+      where: { id },
+      include: { audit: true },
+    });
     if (!log) throw new NotFoundException('Coaching log not found');
     if (!log.releasedAt)
       throw new BadRequestException('Coaching log is not released yet');
 
-    return this.prisma.coachingLog.update({
-      where: { id },
-      data: {
-        agentCommitment: commitment,
-        agentAckAt: new Date(),
-      },
-    });
+    return this.prisma.$transaction([
+      this.prisma.coachingLog.update({
+        where: { id },
+        data: {
+          agentCommitment: commitment,
+          agentAckAt: new Date(),
+        },
+      }),
+      this.prisma.audit.update({
+        where: { id: log.auditId },
+        data: {
+          status: AuditStatus.ACKNOWLEDGED,
+          lastActionAt: new Date(),
+        },
+      }),
+    ]);
   }
 }

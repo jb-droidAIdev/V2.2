@@ -1,13 +1,21 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { json, urlencoded } from 'express';
+import helmet from 'helmet';
+import * as compression from 'compression';
 import { ErrorLoggingInterceptor } from './common/interceptors/error-logging.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  app.use(helmet());
+  app.use(compression());
   // app.setGlobalPrefix('api');
   app.enableCors({
-    origin: process.env.FRONTEND_URL,
+    origin: [
+      process.env.FRONTEND_URL || 'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'http://localhost:5173', // Common Vite port just in case
+    ],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
@@ -17,16 +25,18 @@ async function bootstrap() {
   app.use(urlencoded({ limit: '50mb', extended: true }));
 
   // Request Logging
-  // app.use((req, res, next) => {
-  //   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-  //   res.on('finish', () => {
-  //     console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} -> ${res.statusCode}`);
-  //   });
-  //   next();
-  // });
+  app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    res.on('finish', () => {
+      console.log(
+        `[${new Date().toISOString()}] ${req.method} ${req.url} -> ${res.statusCode}`,
+      );
+    });
+    next();
+  });
 
-  // // Global Error Logging
-  // app.useGlobalInterceptors(new ErrorLoggingInterceptor());
+  // Global Error Logging
+  app.useGlobalInterceptors(new ErrorLoggingInterceptor());
 
   const port = process.env.PORT ?? 4000;
   await app.listen(port);

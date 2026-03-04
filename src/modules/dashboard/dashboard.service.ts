@@ -404,7 +404,8 @@ export class DashboardService {
         },
         select: {
           categoryLabel: true,
-          criterion: { select: { categoryName: true } },
+          criterionTitle: true,
+          criterion: { select: { categoryName: true, title: true } },
           audit: {
             select: {
               agentId: true,
@@ -419,19 +420,19 @@ export class DashboardService {
       const groupedByAgentCat: Record<string, Record<string, any[]>> = {};
       allFailuresInScope.forEach((f) => {
         const agentId = f.audit.agentId;
-        const cat = (
-          f.categoryLabel ||
-          f.criterion?.categoryName ||
-          'General'
+        const paramStr = (
+          f.criterionTitle ||
+          f.criterion?.title ||
+          'Unknown Parameter'
         ).trim();
         if (!groupedByAgentCat[agentId]) groupedByAgentCat[agentId] = {};
-        if (!groupedByAgentCat[agentId][cat])
-          groupedByAgentCat[agentId][cat] = [];
-        groupedByAgentCat[agentId][cat].push(f);
+        if (!groupedByAgentCat[agentId][paramStr])
+          groupedByAgentCat[agentId][paramStr] = [];
+        groupedByAgentCat[agentId][paramStr].push(f);
       });
 
-      for (const [agentId, cats] of Object.entries(groupedByAgentCat)) {
-        for (const [category, instances] of Object.entries(cats)) {
+      for (const [agentId, params] of Object.entries(groupedByAgentCat)) {
+        for (const [category, instances] of Object.entries(params)) {
           const sortedInstances = [...instances].sort(
             (a, b) =>
               new Date(b.audit.submittedAt).getTime() -
@@ -495,23 +496,24 @@ export class DashboardService {
         },
         select: {
           categoryLabel: true,
-          criterion: { select: { categoryName: true } },
+          criterionTitle: true,
+          criterion: { select: { categoryName: true, title: true } },
           audit: { select: { submittedAt: true } },
         },
       });
 
-      const failuresByCat: Record<string, any[]> = {};
+      const failuresByParam: Record<string, any[]> = {};
       agentFailures.forEach((f) => {
-        const cat = (
-          f.categoryLabel ||
-          f.criterion?.categoryName ||
-          'General'
+        const paramStr = (
+          f.criterionTitle ||
+          f.criterion?.title ||
+          'Unknown Parameter'
         ).trim();
-        if (!failuresByCat[cat]) failuresByCat[cat] = [];
-        failuresByCat[cat].push(f);
+        if (!failuresByParam[paramStr]) failuresByParam[paramStr] = [];
+        failuresByParam[paramStr].push(f);
       });
 
-      policyProgress = Object.entries(failuresByCat)
+      policyProgress = Object.entries(failuresByParam)
         .map(([category, instances]) => {
           const sortedInstances = [...instances].sort(
             (a, b) =>

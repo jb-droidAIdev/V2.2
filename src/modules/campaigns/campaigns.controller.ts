@@ -29,6 +29,7 @@ export class CampaignsController {
     return this.campaignsService.findAll(req.user);
   }
 
+
   @UseGuards(JwtAuthGuard)
   @Get('mine/assigned')
   findAssigned(@Req() req: any) {

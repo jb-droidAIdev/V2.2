@@ -25,11 +25,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     const { password, userRole, customPermissions, ...result } = user;
 
-    // Flatten permissions
+    // Flatten permissions safely
     const rolePerms =
-      userRole?.permissions?.map((p: any) => p.permission.code) || [];
+      userRole?.permissions
+        ?.map((p: any) => p?.permission?.code)
+        ?.filter(Boolean) || [];
     const customPerms =
-      customPermissions?.map((p: any) => p.permission.code) || [];
+      customPermissions
+        ?.map((p: any) => p?.permission?.code)
+        ?.filter(Boolean) || [];
 
     // Combine unique
     const permissions = Array.from(new Set([...rolePerms, ...customPerms]));

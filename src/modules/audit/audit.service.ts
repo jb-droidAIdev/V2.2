@@ -887,7 +887,7 @@ export class AuditService {
     const updatedAudit = await this.prisma.audit.update({
       where: { id },
       data: {
-        status: Math.round(percent) === 100 ? (AuditStatus as any).ACKNOWLEDGED : AuditStatus.RELEASED,
+        status: Math.round(percent) === 100 ? AuditStatus.ACKNOWLEDGED : AuditStatus.RELEASED,
         submittedAt: now,
         releasedAt: now,
         agentAckDeadline: Math.round(percent) === 100 ? null : deadline,
@@ -1012,12 +1012,23 @@ export class AuditService {
       throw new BadRequestException('Only released audits can be acknowledged');
     }
 
-    return this.prisma.audit.update({
-      where: { id },
-      data: {
-        status: (AuditStatus as any).ACKNOWLEDGED,
-        lastActionAt: new Date(),
-      },
+    return this.prisma.$transaction(async (tx) => {
+      // Mark audit as acknowledged
+      const updated = await tx.audit.update({
+        where: { id },
+        data: {
+          status: AuditStatus.ACKNOWLEDGED,
+          lastActionAt: new Date(),
+        },
+      });
+
+      // Synchronize coaching log if exists
+      await tx.coachingLog.updateMany({
+        where: { auditId: id, agentAckAt: null },
+        data: { agentAckAt: new Date() },
+      });
+
+      return updated;
     });
   }
 

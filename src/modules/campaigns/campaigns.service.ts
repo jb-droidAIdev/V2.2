@@ -4,7 +4,7 @@ import { Campaign } from '@prisma/client';
 
 @Injectable()
 export class CampaignsService {
-  constructor(private prisma: PrismaService) { }
+  constructor(private prisma: PrismaService) {}
 
   async findAll(user?: any) {
     try {
@@ -130,7 +130,8 @@ export class CampaignsService {
         .filter((campaign: any) => {
           if (!campaign) return false;
           const hasActiveDirectForm = (campaign.forms || []).length > 0;
-          const hasActiveTeamForm = campaign.name && activeTeamNames.has(campaign.name);
+          const hasActiveTeamForm =
+            campaign.name && activeTeamNames.has(campaign.name);
           const isUserCampaign = campaign.type !== 'ADMIN';
           return (hasActiveDirectForm || hasActiveTeamForm) && isUserCampaign;
         })

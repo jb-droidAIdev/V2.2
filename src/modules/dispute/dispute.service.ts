@@ -17,7 +17,7 @@ export class DisputeService {
     private prisma: PrismaService,
     private auditService: AuditService,
     private mailService: MailService,
-  ) { }
+  ) {}
 
   async createDispute(
     auditId: string,
@@ -197,7 +197,9 @@ export class DisputeService {
         });
 
         if (allAccepted) {
-          const audit = await tx.audit.findUnique({ where: { id: item.dispute.auditId } });
+          const audit = await tx.audit.findUnique({
+            where: { id: item.dispute.auditId },
+          });
           const is100 = audit && Math.round(audit.score || 0) === 100;
 
           await tx.audit.update({
@@ -412,7 +414,7 @@ export class DisputeService {
 
         const finalVerdictLabel =
           anyFinalAccepted ||
-            allItems.every((i) => i.qaVerdict === DisputeVerdict.ACCEPTED)
+          allItems.every((i) => i.qaVerdict === DisputeVerdict.ACCEPTED)
             ? 'ACCEPTED'
             : 'REJECTED';
 
@@ -424,7 +426,7 @@ export class DisputeService {
             where: { id: auditId },
             data: {
               status: is100 ? AuditStatus.ACKNOWLEDGED : AuditStatus.RELEASED,
-              lastActionAt: new Date()
+              lastActionAt: new Date(),
             },
           });
         } else {

@@ -16,7 +16,7 @@ export class CoachingLogService {
   constructor(
     private prisma: PrismaService,
     private mailService: MailService,
-  ) { }
+  ) {}
 
   async findByAuditId(auditId: string) {
     const log = await this.prisma.coachingLog.findUnique({

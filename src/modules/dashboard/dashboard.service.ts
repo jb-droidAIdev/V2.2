@@ -13,11 +13,15 @@ import {
   endOfWeek,
   startOfMonth,
   endOfMonth,
+  addHours,
+  addDays,
+  differenceInHours,
+  isWeekend,
 } from 'date-fns';
 
 @Injectable()
 export class DashboardService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async getStats(
     filters: {
@@ -34,262 +38,272 @@ export class DashboardService {
     },
     user: any,
   ) {
-    const role = String(user.role || '').toUpperCase();
-    const restrictedRoles = [
-      'QA_TL',
-      'QATL',
-      'OPS_TL',
-      'OPSTL',
-      'OPS_MANAGER',
-      'OPSMANAGER',
-      'SDM',
-      'QA',
-    ];
-    const isStaff = role !== 'AGENT';
+    try {
+      const role = String(user.role || '').toUpperCase();
+      const restrictedRoles = [
+        'QA_TL',
+        'QATL',
+        'OPS_TL',
+        'OPSTL',
+        'OPS_MANAGER',
+        'OPSMANAGER',
+        'SDM',
+        'QA',
+      ];
+      const isStaff = role !== 'AGENT';
 
-    console.log(
-      `[DASHBOARD] getStats Entry | User: ${user.id} | Role: ${role}`,
-    );
-
-    // [MANDATORY ASSIGNMENT CHECK]
-    // If user is in a restricted role and has no campaign assignments, return blank data immediately.
-    let assignedCampaignIds: string[] = [];
-    if (restrictedRoles.includes(role)) {
-      const userAssignments = await this.prisma.campaignQA.findMany({
-        where: { userId: user.id, isActive: true },
-        select: { campaignId: true },
-      });
-
-      assignedCampaignIds = userAssignments.map((a) => a.campaignId);
-
-      if (assignedCampaignIds.length === 0) {
-        console.log(
-          `[DASHBOARD] Restricted user ${user.id} has no assignments - returning absolute blank state.`,
-        );
-        return this.getEmptyStats();
-      }
-    }
-
-    const where: any = {
-      status: {
-        in: [
-          AuditStatus.SUBMITTED,
-          AuditStatus.RELEASED,
-          AuditStatus.DISPUTED,
-          AuditStatus.REAPPEALED,
-        ],
-      },
-    };
-
-    // Initialize agent filter object early to support merging
-    where.agent = {};
-
-    // Helper to normalize input (handle both ?key=1,2 and multiple ?key=1&key=2)
-    const normalizeArray = (val: any) => {
-      if (!val) return [];
-      const arr = Array.isArray(val) ? val : val.split(',');
-      return arr.map((v: any) => String(v).trim()).filter(Boolean);
-    };
-
-    // 1. Date Range
-    if (filters.startDate || filters.endDate) {
-      where.submittedAt = {};
-      if (filters.startDate)
-        where.submittedAt.gte = new Date(filters.startDate);
-      if (filters.endDate)
-        where.submittedAt.lte = endOfDay(new Date(filters.endDate));
-    }
-
-    // 2. Campaigns & Teams
-    const campaignIds = normalizeArray(filters.campaignId);
-    if (campaignIds.length > 0) {
-      const teamNames = campaignIds
-        .filter((id: string) => id.startsWith('TEAM:'))
-        .map((id: string) => id.replace('TEAM:', ''));
-      const realIds = campaignIds.filter(
-        (id: string) => !id.startsWith('TEAM:'),
+      console.log(
+        `[DASHBOARD] getStats Entry | User: ${user.id} | Role: ${role} | Filters: ${JSON.stringify(filters)}`,
       );
 
-      const campaignConditions = [];
-      if (realIds.length > 0)
-        campaignConditions.push({ campaignId: { in: realIds } });
-      if (teamNames.length > 0)
-        campaignConditions.push({ agent: { employeeTeam: { in: teamNames } } });
+      // [MANDATORY ASSIGNMENT CHECK]
+      // If user is in a restricted role and has no campaign assignments, return blank data immediately.
+      let assignedCampaignIds: string[] = [];
+      if (restrictedRoles.includes(role)) {
+        const userAssignments = await this.prisma.campaignQA.findMany({
+          where: { userId: user.id, isActive: true },
+          select: { campaignId: true },
+        });
 
-      if (campaignConditions.length > 1) {
-        where.OR = campaignConditions;
-      } else if (campaignConditions.length === 1) {
-        const cond = campaignConditions[0];
-        if (cond.campaignId) where.campaignId = cond.campaignId;
-        if (cond.agent) where.agent = { ...where.agent, ...cond.agent };
+        assignedCampaignIds = userAssignments.map((a) => a.campaignId);
+
+        if (assignedCampaignIds.length === 0) {
+          console.log(
+            `[DASHBOARD] Restricted user ${user.id} has no assignments - returning absolute blank state.`,
+          );
+          return this.getEmptyStats();
+        }
       }
-    }
 
-    // 3. Auditor(s)
-    const auditorIds = normalizeArray(filters.auditorId);
-    if (auditorIds.length > 0) {
-      where.auditorId = { in: auditorIds };
-    }
+      const where: any = {
+        status: {
+          in: [
+            AuditStatus.RELEASED,
+            AuditStatus.DISPUTED,
+            AuditStatus.REAPPEALED,
+            AuditStatus.ACKNOWLEDGED,
+          ],
+        },
+      };
 
-    // 4. Agent Selection (Multi-select)
-    const agentIds = normalizeArray(filters.agentId);
-    if (agentIds.length > 0) {
-      where.agent.id = { in: agentIds };
-    }
+      // Initialize agent filter object early to support merging
+      where.agent = {};
 
-    // 5. Agent Name (Search)
-    if (filters.agentName) {
-      where.agent.name = { contains: filters.agentName, mode: 'insensitive' };
-    }
+      // Helper to normalize input (handle both ?key=1,2 and multiple ?key=1&key=2)
+      const normalizeArray = (val: any) => {
+        if (!val) return [];
+        const arr = Array.isArray(val) ? val : val.split(',');
+        return arr.map((v: any) => String(v).trim()).filter(Boolean);
+      };
 
-    // 6. Supervisor/SDM Filters
-    const supervisors = normalizeArray(filters.supervisor);
-    if (supervisors.length > 0) where.agent.supervisor = { in: supervisors };
+      // 1. Date Range
+      const now = new Date();
+      if (filters.startDate || filters.endDate) {
+        where.submittedAt = {};
+        if (filters.startDate) {
+          const sd = new Date(filters.startDate);
+          if (!isNaN(sd.getTime())) where.submittedAt.gte = sd;
+        }
+        if (filters.endDate) {
+          const ed = new Date(filters.endDate);
+          if (!isNaN(ed.getTime())) where.submittedAt.lte = endOfDay(ed);
+        }
+        if (Object.keys(where.submittedAt).length === 0) delete where.submittedAt;
+      }
 
-    const sdms = normalizeArray(filters.sdm);
-    if (sdms.length > 0) where.agent.sdm = { in: sdms };
+      // 2. Campaigns & Teams
+      const campaignIds = normalizeArray(filters.campaignId);
+      if (campaignIds.length > 0) {
+        const teamNames = campaignIds
+          .filter((id: string) => id.startsWith('TEAM:'))
+          .map((id: string) => id.replace('TEAM:', ''));
+        const realIds = campaignIds.filter(
+          (id: string) => !id.startsWith('TEAM:'),
+        );
 
-    // 7. Ticket ID Search (External or Reference)
-    if (filters.ticketId) {
-      const ticketCondition = {
-        OR: [
-          {
-            sampledTicket: {
-              ticket: {
-                externalTicketId: {
-                  contains: filters.ticketId,
-                  mode: 'insensitive',
+        const campaignConditions = [];
+        if (realIds.length > 0)
+          campaignConditions.push({ campaignId: { in: realIds } });
+        if (teamNames.length > 0)
+          campaignConditions.push({
+            agent: { employeeTeam: { in: teamNames } },
+          });
+
+        if (campaignConditions.length > 1) {
+          where.OR = campaignConditions;
+        } else if (campaignConditions.length === 1) {
+          const cond = campaignConditions[0];
+          if (cond.campaignId) where.campaignId = cond.campaignId;
+          if (cond.agent) where.agent = { ...where.agent, ...cond.agent };
+        }
+      }
+
+      // 3. Auditor(s)
+      const auditorIds = normalizeArray(filters.auditorId);
+      if (auditorIds.length > 0) {
+        where.auditorId = { in: auditorIds };
+      }
+
+      // 4. Agent Selection (Multi-select)
+      const agentIds = normalizeArray(filters.agentId);
+      if (agentIds.length > 0) {
+        where.agent.id = { in: agentIds };
+      }
+
+      // 5. Agent Name (Search)
+      if (filters.agentName) {
+        where.agent.name = { contains: filters.agentName, mode: 'insensitive' };
+      }
+
+      // 6. Supervisor/SDM Filters
+      const supervisors = normalizeArray(filters.supervisor);
+      if (supervisors.length > 0) where.agent.supervisor = { in: supervisors };
+
+      const sdms = normalizeArray(filters.sdm);
+      if (sdms.length > 0) where.agent.sdm = { in: sdms };
+
+      // 7. Ticket ID Search (External or Reference)
+      if (filters.ticketId) {
+        const ticketCondition = {
+          OR: [
+            {
+              sampledTicket: {
+                ticket: {
+                  externalTicketId: {
+                    contains: filters.ticketId,
+                    mode: 'insensitive',
+                  },
                 },
               },
             },
-          },
-          {
-            ticketReference: {
-              contains: filters.ticketId,
-              mode: 'insensitive',
+            {
+              ticketReference: {
+                contains: filters.ticketId,
+                mode: 'insensitive',
+              },
             },
-          },
-          {
-            agent: {
-              name: { contains: filters.ticketId, mode: 'insensitive' },
+            {
+              agent: {
+                name: { contains: filters.ticketId, mode: 'insensitive' },
+              },
             },
-          },
-        ],
-      };
+          ],
+        };
 
-      // If we already have an OR (from campaigns), we must wrap both in an AND to intersect
-      if (where.OR) {
-        const existingOR = where.OR;
-        delete where.OR;
-        where.AND = [{ OR: existingOR }, ticketCondition];
-      } else {
-        where.OR = ticketCondition.OR;
+        // If we already have an OR (from campaigns), we must wrap both in an AND to intersect
+        if (where.OR) {
+          const existingOR = where.OR;
+          delete where.OR;
+          where.AND = [{ OR: existingOR }, ticketCondition];
+        } else {
+          where.OR = ticketCondition.OR;
+        }
       }
-    }
 
-    // 8. Role-based Security & Governance
-    if (role === 'AGENT') {
-      where.agentId = user.id; // Override if it's an agent viewing their own data
-    } else if (restrictedRoles.includes(role)) {
-      const assignedIds = assignedCampaignIds;
-      // Intersect with existing filters
-      if (where.campaignId && where.campaignId.in) {
-        const requested = where.campaignId.in;
-        const intersected = requested.filter((id: string) =>
-          assignedIds.includes(id),
-        );
-        if (intersected.length === 0) return this.getEmptyStats();
-        where.campaignId = { in: intersected };
-      } else {
-        where.campaignId = { in: assignedIds };
+      // 8. Role-based Security & Governance
+      if (role === 'AGENT') {
+        where.agentId = user.id; // Override if it's an agent viewing their own data
+      } else if (restrictedRoles.includes(role)) {
+        const assignedIds = assignedCampaignIds;
+        // Intersect with existing filters
+        if (where.campaignId && where.campaignId.in) {
+          const requested = where.campaignId.in;
+          const intersected = requested.filter((id: string) =>
+            assignedIds.includes(id),
+          );
+          if (intersected.length === 0) return this.getEmptyStats();
+          where.campaignId = { in: intersected };
+        } else {
+          where.campaignId = { in: assignedIds };
+        }
+      } else if (!isStaff) {
+        // Further restricted roles (if any) only see their own team
+        where.agent = { ...where.agent, employeeTeam: user.employeeTeam };
       }
-    } else if (!isStaff) {
-      // Further restricted roles (if any) only see their own team
-      where.agent = { ...where.agent, employeeTeam: user.employeeTeam };
-    }
 
-    // Clean up empty objects to help Prisma optimizer
-    if (Object.keys(where.agent).length === 0) delete where.agent;
+      // Clean up empty objects to help Prisma optimizer
+      if (Object.keys(where.agent).length === 0) delete where.agent;
 
-    // Execute queries
-    const audits = await this.prisma.audit.findMany({
-      where,
-      select: {
-        id: true,
-        score: true,
-        status: true,
-        submittedAt: true,
-      },
-    });
+      // Execute queries
+      const audits = await this.prisma.audit.findMany({
+        where,
+        select: {
+          id: true,
+          score: true,
+          status: true,
+          submittedAt: true,
+        },
+      });
 
-    const totalAudits = audits.length;
-    const avgScore =
-      totalAudits > 0
-        ? audits.reduce((acc, curr) => acc + (curr.score || 0), 0) / totalAudits
-        : 0;
+      const totalAudits = audits.length;
+      const avgScore =
+        totalAudits > 0
+          ? audits.reduce((acc, curr) => acc + (curr.score || 0), 0) /
+          totalAudits
+          : 0;
 
-    const complianceRate =
-      audits.length > 0
-        ? (audits.filter((a) => (a.score || 0) >= 90).length / audits.length) *
+      const complianceRate =
+        audits.length > 0
+          ? (audits.filter((a) => (a.score || 0) >= 90).length /
+            audits.length) *
           100
-        : 0;
+          : 0;
 
-    const disputedCount = audits.filter(
-      (a) =>
-        a.status === AuditStatus.DISPUTED ||
-        a.status === AuditStatus.REAPPEALED,
-    ).length;
-    const disputeRate =
-      totalAudits > 0 ? (disputedCount / totalAudits) * 100 : 0;
+      const disputedCount = audits.filter(
+        (a) =>
+          a.status === AuditStatus.DISPUTED ||
+          a.status === AuditStatus.REAPPEALED,
+      ).length;
+      const disputeRate =
+        totalAudits > 0 ? (disputedCount / totalAudits) * 100 : 0;
 
-    // 2. Trend Data
-    const granularity = filters.granularity || 'day';
-    const now = new Date();
-    // Default ranges if not provided
-    const startDate = filters.startDate
-      ? new Date(filters.startDate)
-      : granularity === 'month'
-        ? subDays(now, 365)
-        : granularity === 'week'
-          ? subDays(now, 90)
-          : subDays(now, 13);
-    const endDate = filters.endDate ? new Date(filters.endDate) : now;
+      // 2. Trend Data
+      const granularity = filters.granularity || 'day';
 
-    let interval;
-    if (granularity === 'month') {
-      interval = eachMonthOfInterval({ start: startDate, end: endDate });
-    } else if (granularity === 'week') {
-      interval = eachWeekOfInterval({ start: startDate, end: endDate });
-    } else {
-      interval = eachDayOfInterval({ start: startDate, end: endDate });
-    }
-
-    const trend = interval.map((date) => {
-      let start, end, label;
-
-      if (granularity === 'month') {
-        start = startOfMonth(date);
-        end = endOfMonth(date);
-        label = format(date, 'MMM yyyy');
-      } else if (granularity === 'week') {
-        start = startOfWeek(date);
-        end = endOfWeek(date);
-        label = format(start, 'MMM d');
-      } else {
-        start = startOfDay(date);
-        end = endOfDay(date);
-        label = format(date, 'MMM dd');
+      let startDate = filters.startDate ? new Date(filters.startDate) : null;
+      if (!startDate || isNaN(startDate.getTime())) {
+        startDate = granularity === 'month' ? subDays(now, 365) : granularity === 'week' ? subDays(now, 90) : subDays(now, 13);
       }
 
-      const periodAudits = audits.filter(
-        (a) => a.submittedAt && a.submittedAt >= start && a.submittedAt <= end,
-      );
+      let endDate = filters.endDate ? new Date(filters.endDate) : now;
+      if (isNaN(endDate.getTime())) endDate = now;
 
-      return {
-        date: label,
-        avgScore:
-          periodAudits.length > 0
-            ? parseFloat(
+      let interval;
+      if (granularity === 'month') {
+        interval = eachMonthOfInterval({ start: startDate, end: endDate });
+      } else if (granularity === 'week') {
+        interval = eachWeekOfInterval({ start: startDate, end: endDate }, { weekStartsOn: 0 });
+      } else {
+        interval = eachDayOfInterval({ start: startDate, end: endDate });
+      }
+
+      const trend = interval.map((date) => {
+        let start, end, label;
+
+        if (granularity === 'month') {
+          start = startOfMonth(date);
+          end = endOfMonth(date);
+          label = format(date, 'MMM yyyy');
+        } else if (granularity === 'week') {
+          start = startOfWeek(date);
+          end = endOfWeek(date);
+          label = format(start, 'MMM d');
+        } else {
+          start = startOfDay(date);
+          end = endOfDay(date);
+          label = format(date, 'MMM dd');
+        }
+
+        const periodAudits = audits.filter(
+          (a) =>
+            a.submittedAt && a.submittedAt >= start && a.submittedAt <= end,
+        );
+
+        return {
+          date: label,
+          avgScore:
+            periodAudits.length > 0
+              ? parseFloat(
                 (
                   periodAudits.reduce(
                     (acc, curr) => acc + (curr.score || 0),
@@ -297,303 +311,307 @@ export class DashboardService {
                   ) / periodAudits.length
                 ).toFixed(2),
               )
-            : null,
-        count: periodAudits.length,
-      };
-    });
-
-    // 3. Failure Categories Heatmap
-    const failedScores = await this.prisma.auditScore.findMany({
-      where: {
-        isFailed: true,
-        audit: where,
-      },
-      include: {
-        criterion: { select: { categoryName: true, title: true } },
-      },
-    });
-
-    const categoryAggregation = failedScores.reduce(
-      (acc, curr) => {
-        // Prioritize snapshot labels for historical integrity, fallback to live relation
-        const cat = (
-          curr.categoryLabel ||
-          curr.criterion?.categoryName ||
-          'General'
-        ).trim();
-        const title =
-          curr.criterionTitle || curr.criterion?.title || 'Unknown Parameter';
-
-        if (!acc[cat]) {
-          acc[cat] = { count: 0, parameters: {} as Record<string, number> };
-        }
-        acc[cat].count += 1;
-        acc[cat].parameters[title] = (acc[cat].parameters[title] || 0) + 1;
-        return acc;
-      },
-      {} as Record<
-        string,
-        { count: number; parameters: Record<string, number> }
-      >,
-    );
-
-    const failureHeatmap = Object.entries(categoryAggregation)
-      .map(([name, data]) => ({
-        name,
-        value: data.count,
-        parameters: Object.entries(data.parameters)
-          .map(([pName, pValue]) => ({ name: pName, value: pValue }))
-          .sort((a, b) => b.value - a.value),
-      }))
-      .sort((a, b) => b.value - a.value);
-
-    // Agent Scores Aggregation for Flip Card
-    const agentScoresRaw = await this.prisma.audit.groupBy({
-      by: ['agentId'],
-      where,
-      _count: { id: true },
-      _avg: { score: true },
-    });
-
-    const agentScores = await Promise.all(
-      agentScoresRaw.map(async (item) => {
-        const agent = await this.prisma.user.findUnique({
-          where: { id: item.agentId },
-          select: { name: true },
-        });
-        return {
-          agentId: item.agentId,
-          agentName: agent?.name || 'Unknown Agent',
-          auditCount: item._count.id,
-          avgScore: item._avg.score
-            ? parseFloat(item._avg.score.toFixed(2))
-            : 0,
+              : null,
+          count: periodAudits.length,
         };
-      }),
-    );
+      });
 
-    // Sort by average score descending
-    agentScores.sort((a, b) => b.avgScore - a.avgScore);
-
-    // 4. Zero Tolerance Policy Tracking
-    let policyProgress = null;
-    const activeProgressions = [];
-
-    // Single Agent Detection Logic:
-    const filteredAgentIds = normalizeArray(filters.agentId);
-    let targetAgentId = null;
-    if (filteredAgentIds.length === 1) {
-      targetAgentId = filteredAgentIds[0];
-    } else if (agentScores.length === 1) {
-      targetAgentId = agentScores[0].agentId;
-    } else if (user.role === Role.AGENT) {
-      targetAgentId = user.id;
-    }
-
-    // For Management: Calculate all active progressions across the scope
-    if (user.role !== Role.AGENT) {
-      // Fetch ALL failures for ALL agents in scope, plus 30-day lookback for window context
-      const bufferStartDate = subDays(startDate, 30);
-      const allFailuresInScope = await this.prisma.auditScore.findMany({
+      // 3. Failure Categories Heatmap
+      const failedScores = await this.prisma.auditScore.findMany({
         where: {
           isFailed: true,
-          audit: {
-            ...where,
-            submittedAt: { gte: bufferStartDate, lte: endDate },
-          },
+          audit: where,
         },
-        select: {
-          categoryLabel: true,
-          criterionTitle: true,
+        include: {
           criterion: { select: { categoryName: true, title: true } },
-          audit: {
-            select: {
-              agentId: true,
-              submittedAt: true,
-              agent: { select: { name: true, employeeTeam: true } },
-              campaign: { select: { name: true } },
+        },
+      });
+
+      const categoryAggregation = failedScores.reduce(
+        (acc, curr) => {
+          // Prioritize snapshot labels for historical integrity, fallback to live relation
+          const cat = (
+            curr.categoryLabel ||
+            curr.criterion?.categoryName ||
+            'General'
+          ).trim();
+          const title =
+            curr.criterionTitle || curr.criterion?.title || 'Unknown Parameter';
+
+          if (!acc[cat]) {
+            acc[cat] = { count: 0, parameters: {} as Record<string, number> };
+          }
+          acc[cat].count += 1;
+          acc[cat].parameters[title] = (acc[cat].parameters[title] || 0) + 1;
+          return acc;
+        },
+        {} as Record<
+          string,
+          { count: number; parameters: Record<string, number> }
+        >,
+      );
+
+      const failureHeatmap = Object.entries(categoryAggregation)
+        .map(([name, data]) => ({
+          name,
+          value: data.count,
+          parameters: Object.entries(data.parameters)
+            .map(([pName, pValue]) => ({ name: pName, value: pValue }))
+            .sort((a, b) => b.value - a.value),
+        }))
+        .sort((a, b) => b.value - a.value);
+
+      // Agent Scores Aggregation for Flip Card
+      const agentScoresRaw = await this.prisma.audit.groupBy({
+        by: ['agentId'],
+        where,
+        _count: { id: true },
+        _avg: { score: true },
+      });
+
+      const agentScores = await Promise.all(
+        agentScoresRaw.map(async (item) => {
+          const agent = await this.prisma.user.findUnique({
+            where: { id: item.agentId },
+            select: { name: true },
+          });
+          return {
+            agentId: item.agentId,
+            agentName: agent?.name || 'Unknown Agent',
+            auditCount: item._count.id,
+            avgScore: item._avg.score
+              ? parseFloat(item._avg.score.toFixed(2))
+              : 0,
+          };
+        }),
+      );
+
+      // Sort by average score descending
+      agentScores.sort((a, b) => b.avgScore - a.avgScore);
+
+      // 4. Zero Tolerance Policy Tracking
+      let policyProgress = null;
+      const activeProgressions = [];
+
+      // Single Agent Detection Logic:
+      const filteredAgentIds = normalizeArray(filters.agentId);
+      let targetAgentId = null;
+      if (filteredAgentIds.length === 1) {
+        targetAgentId = filteredAgentIds[0];
+      } else if (agentScores.length === 1) {
+        targetAgentId = agentScores[0].agentId;
+      } else if (user.role === Role.AGENT) {
+        targetAgentId = user.id;
+      }
+
+      // For Management: Calculate all active progressions across the scope
+      if (user.role !== Role.AGENT) {
+        // Fetch ALL failures for ALL agents in scope, plus 30-day lookback for window context
+        const bufferStartDate = subDays(startDate, 30);
+        const allFailuresInScope = await this.prisma.auditScore.findMany({
+          where: {
+            isFailed: true,
+            audit: {
+              ...where,
+              submittedAt: { gte: bufferStartDate, lte: endDate },
             },
           },
-        },
-      });
+          select: {
+            categoryLabel: true,
+            criterionTitle: true,
+            criterion: { select: { categoryName: true, title: true } },
+            audit: {
+              select: {
+                agentId: true,
+                submittedAt: true,
+                agent: { select: { name: true, employeeTeam: true } },
+                campaign: { select: { name: true } },
+              },
+            },
+          },
+        });
 
-      const groupedByAgentCat: Record<string, Record<string, any[]>> = {};
-      allFailuresInScope.forEach((f) => {
-        const agentId = f.audit.agentId;
-        const paramStr = (
-          f.criterionTitle ||
-          f.criterion?.title ||
-          'Unknown Parameter'
-        ).trim();
-        if (!groupedByAgentCat[agentId]) groupedByAgentCat[agentId] = {};
-        if (!groupedByAgentCat[agentId][paramStr])
-          groupedByAgentCat[agentId][paramStr] = [];
-        groupedByAgentCat[agentId][paramStr].push(f);
-      });
+        const groupedByAgentCat: Record<string, Record<string, any[]>> = {};
+        allFailuresInScope.forEach((f) => {
+          const agentId = f.audit.agentId;
+          const paramStr = (
+            f.criterionTitle ||
+            f.criterion?.title ||
+            'Unknown Parameter'
+          ).trim();
+          if (!groupedByAgentCat[agentId]) groupedByAgentCat[agentId] = {};
+          if (!groupedByAgentCat[agentId][paramStr])
+            groupedByAgentCat[agentId][paramStr] = [];
+          groupedByAgentCat[agentId][paramStr].push(f);
+        });
 
-      for (const [agentId, params] of Object.entries(groupedByAgentCat)) {
-        for (const [category, instances] of Object.entries(params)) {
-          const sortedInstances = [...instances].sort(
-            (a, b) =>
-              new Date(b.audit.submittedAt).getTime() -
-              new Date(a.audit.submittedAt).getTime(),
-          );
+        for (const [agentId, params] of Object.entries(groupedByAgentCat)) {
+          for (const [category, instances] of Object.entries(params)) {
+            const sortedInstances = [...instances].sort(
+              (a, b) =>
+                new Date(b.audit.submittedAt).getTime() -
+                new Date(a.audit.submittedAt).getTime(),
+            );
 
-          // Only consider if the most recent infraction is within our primary filter range
-          const latest = sortedInstances[0];
-          const lastInfractionDate = new Date(latest.audit.submittedAt);
-          if (lastInfractionDate < startDate) continue;
+            // Only consider if the most recent infraction is within our primary filter range
+            const latest = sortedInstances[0];
+            const lastInfractionDate = new Date(latest.audit.submittedAt);
+            if (lastInfractionDate < startDate) continue;
 
-          const windowStart = subDays(lastInfractionDate, 30);
-          const count = instances.filter((i) => {
-            const d = new Date(i.audit.submittedAt);
-            return d >= windowStart && d <= lastInfractionDate;
-          }).length;
+            const windowStart = subDays(lastInfractionDate, 30);
+            const count = instances.filter((i) => {
+              const d = new Date(i.audit.submittedAt);
+              return d >= windowStart && d <= lastInfractionDate;
+            }).length;
 
-          if (count >= 3) {
-            let sanction = 'Written Warning';
-            if (count >= 15) sanction = 'Termination';
-            else if (count >= 12) sanction = 'Suspension (5 Days)';
-            else if (count >= 9) sanction = 'Suspension (3 Days)';
-            else if (count >= 6) sanction = 'Final Written Warning';
+            if (count >= 3) {
+              let sanction = 'Written Warning';
+              if (count >= 15) sanction = 'Termination';
+              else if (count >= 12) sanction = 'Suspension (5 Days)';
+              else if (count >= 9) sanction = 'Suspension (3 Days)';
+              else if (count >= 6) sanction = 'Final Written Warning';
 
-            activeProgressions.push({
-              agentId,
-              agentName: latest.audit.agent?.name || 'Unknown',
-              teamName: latest.audit.agent?.employeeTeam || 'Direct Report',
-              campaign:
-                latest.audit.campaign?.name ||
-                latest.audit.agent?.employeeTeam ||
-                'N/A',
-              category,
-              count,
-              sanction,
-              lastInfraction: lastInfractionDate,
-            });
+              activeProgressions.push({
+                agentId,
+                agentName: latest.audit.agent?.name || 'Unknown',
+                teamName: latest.audit.agent?.employeeTeam || 'Direct Report',
+                campaign:
+                  latest.audit.campaign?.name ||
+                  latest.audit.agent?.employeeTeam ||
+                  'N/A',
+                category,
+                count,
+                sanction,
+                lastInfraction: lastInfractionDate,
+              });
+            }
           }
         }
+        activeProgressions.sort((a, b) => b.count - a.count);
       }
-      activeProgressions.sort((a, b) => b.count - a.count);
-    }
 
-    // Single Agent Result (for display on categories)
-    if (targetAgentId) {
-      const singleAgentId = targetAgentId;
-      const agentFailures = await this.prisma.auditScore.findMany({
-        where: {
-          isFailed: true,
-          audit: {
-            agentId: singleAgentId,
-            status: {
-              in: [
-                AuditStatus.SUBMITTED,
-                AuditStatus.RELEASED,
-                AuditStatus.DISPUTED,
-                AuditStatus.REAPPEALED,
-              ],
+      // Single Agent Result (for display on categories)
+      if (targetAgentId) {
+        const singleAgentId = targetAgentId;
+        const agentFailures = await this.prisma.auditScore.findMany({
+          where: {
+            isFailed: true,
+            audit: {
+              agentId: singleAgentId,
+              status: {
+                in: [
+                  AuditStatus.RELEASED,
+                  AuditStatus.DISPUTED,
+                  AuditStatus.REAPPEALED,
+                  AuditStatus.ACKNOWLEDGED,
+                ],
+              },
             },
           },
+          select: {
+            categoryLabel: true,
+            criterionTitle: true,
+            criterion: { select: { categoryName: true, title: true } },
+            audit: { select: { submittedAt: true } },
+          },
+        });
+
+        const failuresByParam: Record<string, any[]> = {};
+        agentFailures.forEach((f) => {
+          const paramStr = (
+            f.criterionTitle ||
+            f.criterion?.title ||
+            'Unknown Parameter'
+          ).trim();
+          if (!failuresByParam[paramStr]) failuresByParam[paramStr] = [];
+          failuresByParam[paramStr].push(f);
+        });
+
+        policyProgress = Object.entries(failuresByParam)
+          .map(([category, instances]) => {
+            const sortedInstances = [...instances].sort(
+              (a, b) =>
+                new Date(b.audit.submittedAt).getTime() -
+                new Date(a.audit.submittedAt).getTime(),
+            );
+            const lastInfractionDate = new Date(
+              sortedInstances[0].audit.submittedAt,
+            );
+            const windowStart = subDays(lastInfractionDate, 30);
+            const count = instances.filter((i) => {
+              const d = new Date(i.audit.submittedAt);
+              return d >= windowStart && d <= lastInfractionDate;
+            }).length;
+
+            let sanction = null;
+            if (count >= 15) sanction = 'For Termination';
+            else if (count >= 12) sanction = 'For Suspension (5 Days)';
+            else if (count >= 9) sanction = 'For Suspension (3 Days)';
+            else if (count >= 6) sanction = 'For Final Written Warning';
+            else if (count >= 3) sanction = 'For Written Warning';
+
+            return {
+              category,
+              count,
+              lastInfraction: lastInfractionDate,
+              sanction,
+            };
+          })
+          .sort((a, b) => b.count - a.count);
+      }
+
+      return {
+        summary: {
+          totalAudits,
+          avgScore: parseFloat(avgScore.toFixed(2)),
+          complianceRate: parseFloat(complianceRate.toFixed(2)),
+          disputeRate: parseFloat(disputeRate.toFixed(2)),
         },
-        select: {
-          categoryLabel: true,
-          criterionTitle: true,
-          criterion: { select: { categoryName: true, title: true } },
-          audit: { select: { submittedAt: true } },
-        },
-      });
-
-      const failuresByParam: Record<string, any[]> = {};
-      agentFailures.forEach((f) => {
-        const paramStr = (
-          f.criterionTitle ||
-          f.criterion?.title ||
-          'Unknown Parameter'
-        ).trim();
-        if (!failuresByParam[paramStr]) failuresByParam[paramStr] = [];
-        failuresByParam[paramStr].push(f);
-      });
-
-      policyProgress = Object.entries(failuresByParam)
-        .map(([category, instances]) => {
-          const sortedInstances = [...instances].sort(
-            (a, b) =>
-              new Date(b.audit.submittedAt).getTime() -
-              new Date(a.audit.submittedAt).getTime(),
-          );
-          const lastInfractionDate = new Date(
-            sortedInstances[0].audit.submittedAt,
-          );
-          const windowStart = subDays(lastInfractionDate, 30);
-          const count = instances.filter((i) => {
-            const d = new Date(i.audit.submittedAt);
-            return d >= windowStart && d <= lastInfractionDate;
-          }).length;
-
-          let sanction = null;
-          if (count >= 15) sanction = 'For Termination';
-          else if (count >= 12) sanction = 'For Suspension (5 Days)';
-          else if (count >= 9) sanction = 'For Suspension (3 Days)';
-          else if (count >= 6) sanction = 'For Final Written Warning';
-          else if (count >= 3) sanction = 'For Written Warning';
-
-          return {
-            category,
-            count,
-            lastInfraction: lastInfractionDate,
-            sanction,
-          };
-        })
-        .sort((a, b) => b.count - a.count);
-    }
-
-    return {
-      summary: {
-        totalAudits,
-        avgScore: parseFloat(avgScore.toFixed(2)),
-        complianceRate: parseFloat(complianceRate.toFixed(2)),
-        disputeRate: parseFloat(disputeRate.toFixed(2)),
-      },
-      trend,
-      failureHeatmap,
-      agentScores,
-      policyProgress,
-      activeProgressions, // New list for management roster view
-      failedAudits: await this.prisma.audit.findMany({
-        where: {
-          ...where,
-          scores: {
-            some: {
-              isFailed: true,
+        trend,
+        failureHeatmap,
+        agentScores,
+        policyProgress,
+        activeProgressions, // New list for management roster view
+        failedAudits: await this.prisma.audit.findMany({
+          where: {
+            ...where,
+            scores: {
+              some: {
+                isFailed: true,
+              },
             },
           },
-        },
-        take: 20,
-        orderBy: { submittedAt: 'desc' },
-        include: {
-          agent: { select: { name: true, employeeTeam: true } },
-          campaign: { select: { name: true } },
-          sampledTicket: {
-            include: {
-              ticket: { select: { externalTicketId: true } },
+          take: 20,
+          orderBy: { submittedAt: 'desc' },
+          include: {
+            agent: { select: { name: true, employeeTeam: true } },
+            campaign: { select: { name: true } },
+            sampledTicket: {
+              include: {
+                ticket: { select: { externalTicketId: true } },
+              },
             },
-          },
-          scores: {
-            where: { isFailed: true },
-            select: {
-              comment: true,
-              categoryLabel: true,
-              criterionTitle: true,
-              criterion: {
-                select: {
-                  title: true,
-                  categoryName: true,
+            scores: {
+              where: { isFailed: true },
+              select: {
+                comment: true,
+                categoryLabel: true,
+                criterionTitle: true,
+                criterion: {
+                  select: {
+                    title: true,
+                    categoryName: true,
+                  },
                 },
               },
             },
           },
-        },
-      }),
-    };
+        }),
+      };
+    } catch (error) {
+      console.error('[DASHBOARD] getStats ERROR:', error);
+      return { error: error.message, stack: error.stack };
+    }
   }
 
   async getFilterOptions(user: any) {
@@ -740,6 +758,310 @@ export class DashboardService {
       throw error;
     }
   }
+  async getCoachingStats(filters: any, user: any) {
+    try {
+      const role = String(user.role || '').toUpperCase();
+      const restrictedRoles = ['QA_TL', 'QATL', 'OPS_TL', 'OPSTL', 'OPS_MANAGER', 'OPSMANAGER', 'SDM', 'QA'];
+      const now = new Date();
+
+      // [MANDATORY ASSIGNMENT CHECK]
+      let assignedCampaignIds: string[] = [];
+      if (restrictedRoles.includes(role)) {
+        const userAssignments = await this.prisma.campaignQA.findMany({
+          where: { userId: user.id, isActive: true },
+          select: { campaignId: true },
+        });
+        assignedCampaignIds = userAssignments.map((a) => a.campaignId);
+        if (assignedCampaignIds.length === 0) return this.getEmptyCoachingStats();
+      }
+
+      const where: any = {
+        releasedAt: { not: null },
+        status: { in: [AuditStatus.RELEASED, AuditStatus.ACKNOWLEDGED] },
+        agent: { is: {} },
+        OR: [
+          { score: { lt: 100 } },
+          { score: null }
+        ]
+      };
+
+      if (role === 'AGENT') {
+        where.agentId = user.id;
+      } else if (restrictedRoles.includes(role)) {
+        where.campaignId = { in: assignedCampaignIds };
+      }
+
+      // Filters
+      if (filters.startDate || filters.endDate) {
+        where.releasedAt = { not: null };
+        if (filters.startDate) {
+          const sd = new Date(filters.startDate);
+          if (!isNaN(sd.getTime())) where.releasedAt.gte = sd;
+        }
+        if (filters.endDate) {
+          const ed = new Date(filters.endDate);
+          if (!isNaN(ed.getTime())) where.releasedAt.lte = endOfDay(ed);
+        }
+      }
+
+      const campaignIds = this.normalizeArray(filters.campaignId);
+      if (campaignIds.length > 0) {
+        const realIds = campaignIds.filter((id: string) => !id.startsWith('TEAM:'));
+        if (realIds.length > 0) where.campaignId = { in: realIds };
+      }
+
+      const auditorIds = this.normalizeArray(filters.auditorId);
+      if (auditorIds.length > 0) where.auditorId = { in: auditorIds };
+
+      const agentIds = this.normalizeArray(filters.agentId);
+      if (agentIds.length > 0) where.agent.id = { in: agentIds };
+
+      const supervisors = this.normalizeArray(filters.supervisor);
+      if (supervisors.length > 0) where.agent.supervisor = { in: supervisors };
+
+      if (Object.keys(where.agent).length === 0) delete where.agent;
+
+      const audits = await this.prisma.audit.findMany({
+        where,
+        include: {
+          agent: true,
+          auditor: true,
+          coachingLog: { include: { supervisor: true } },
+        },
+      });
+
+      const results = audits.map((audit) => {
+        try {
+          const sentDate = new Date(audit.releasedAt!);
+          const minTime = addHours(sentDate, 24);
+
+          // SLA: 2 Business Days (Due by End of Day)
+          let deadline = endOfDay(sentDate);
+          let bizDays = 0;
+          while (bizDays < 2) {
+            deadline = addDays(deadline, 1);
+            if (!isWeekend(deadline)) bizDays++;
+          }
+          deadline = endOfDay(deadline);
+
+          const coachingDate = audit.coachingLog?.releasedAt ? new Date(audit.coachingLog.releasedAt) : null;
+          const acknowledged = !!audit.coachingLog?.agentAckAt;
+
+          let status = 'Not Started';
+          if (coachingDate) {
+            if (coachingDate < minTime) status = 'Early';
+            else if (coachingDate <= deadline) status = 'On-Time';
+            else status = 'Late';
+          } else {
+            status = now > deadline ? 'Overdue' : 'Not Started';
+          }
+
+          const isBreached = status === 'Late' || status === 'Overdue';
+
+          return {
+            id: audit.id,
+            agentName: audit.agent.name,
+            supervisorName: audit.agent.supervisor || audit.coachingLog?.supervisor?.name || 'Unknown',
+            status,
+            isBreached,
+            acknowledged,
+            isReleased: !!coachingDate,
+            sentDate,
+            coachingDate,
+            deadline,
+            ticketReference: audit.ticketReference,
+          };
+        } catch (e) {
+          return null;
+        }
+      }).filter(Boolean) as any[];
+
+      // Aggregators
+      const agentMap = new Map();
+      const supervisorMap = new Map();
+
+      results.forEach(r => {
+        // Agent Table Stats
+        if (!agentMap.has(r.agentName)) {
+          agentMap.set(r.agentName, {
+            name: r.agentName, total: 0, completed: 0, pending: 0, overdue: 0,
+            early: 0, onTime: 0, late: 0, breached: 0
+          });
+        }
+        const a = agentMap.get(r.agentName);
+        a.total++;
+        if (r.acknowledged) a.completed++;
+        else if (r.isReleased) a.pending++;
+        else if (r.status === 'Overdue') a.overdue++;
+
+        if (r.status === 'Early') a.early++;
+        else if (r.status === 'On-Time') a.onTime++;
+        else if (r.status === 'Late') a.late++;
+
+        if (r.isBreached) a.breached++;
+
+        // Supervisor Table Stats
+        const sName = role === 'AGENT' ? r.agentName : r.supervisorName;
+        if (!supervisorMap.has(sName)) {
+          supervisorMap.set(sName, {
+            name: sName, total: 0, completed: 0, pending: 0, overdue: 0,
+            early: 0, onTime: 0, late: 0, breached: 0
+          });
+        }
+        const s = supervisorMap.get(sName);
+        s.total++;
+        if (r.acknowledged) s.completed++;
+        else if (r.isReleased) s.pending++;
+        else if (r.status === 'Overdue') s.overdue++;
+
+        if (r.status === 'Early') s.early++;
+        else if (r.status === 'On-Time') s.onTime++;
+        else if (r.status === 'Late') s.late++;
+
+        if (r.isBreached) s.breached++;
+      });
+
+      const agentCoverage = Array.from(agentMap.values()).map(a => ({
+        ...a,
+        complianceRate: a.total > 0 ? ((a.total - a.breached) / a.total) * 100 : 0
+      })).sort((a, b) => b.overdue - a.overdue);
+
+      const supervisorAccountability = Array.from(supervisorMap.values()).map(s => ({
+        ...s,
+        compliance: s.total > 0 ? ((s.total - s.breached) / s.total) * 100 : 0
+      })).sort((a, b) => a.compliance - b.compliance);
+
+      const totalAudits = results.length;
+      const totalBreached = results.filter(r => r.isBreached).length;
+      const complianceRate = totalAudits > 0 ? ((totalAudits - totalBreached) / totalAudits) * 100 : 0;
+
+      const summary = {
+        totalAudits,
+        completed: results.filter(r => r.acknowledged).length,
+        pending: results.filter(r => r.isReleased && !r.acknowledged).length,
+        complianceRate,
+        onTimeRate: complianceRate,
+        early: results.filter(r => r.status === 'Early').length,
+        late: results.filter(r => r.status === 'Late').length,
+        overdue: results.filter(r => r.status === 'Overdue').length,
+        notStarted: results.filter(r => r.status === 'Not Started').length,
+      };
+
+      const overdueTracker = results
+        .filter(r => r.status === 'Overdue')
+        .map(r => ({
+          id: r.id,
+          agentName: r.agentName,
+          supervisorName: r.supervisorName,
+          sentDate: r.sentDate,
+          deadline: r.deadline,
+          hoursOverdue: Math.max(0, differenceInHours(now, r.deadline)),
+          ticketReference: r.ticketReference
+        }))
+        .sort((a, b) => b.hoursOverdue - a.hoursOverdue);
+
+      const pendingTracker = results
+        .filter(r => r.isReleased && !r.acknowledged)
+        .sort((a, b) => b.sentDate.getTime() - a.sentDate.getTime());
+
+      // Activity Trend with Granularity
+      const granularity = filters.granularity || 'day';
+      let trendStart = filters.startDate ? new Date(filters.startDate) : null;
+      if (!trendStart || isNaN(trendStart.getTime())) trendStart = subDays(now, 14);
+      trendStart = startOfDay(trendStart);
+
+      let trendEnd = filters.endDate ? new Date(filters.endDate) : now;
+      if (isNaN(trendEnd.getTime())) trendEnd = now;
+      trendEnd = endOfDay(trendEnd);
+
+      let interval;
+      if (granularity === 'month') {
+        interval = eachMonthOfInterval({ start: trendStart, end: trendEnd });
+      } else if (granularity === 'week') {
+        interval = eachWeekOfInterval({ start: trendStart, end: trendEnd }, { weekStartsOn: 0 }); // 0 = Sunday
+      } else {
+        interval = eachDayOfInterval({ start: trendStart, end: trendEnd });
+      }
+
+      const activityTrend = interval.map((date) => {
+        let start, end, label;
+
+        if (granularity === 'month') {
+          start = startOfMonth(date);
+          end = endOfMonth(date);
+          label = format(date, 'MMM yyyy');
+        } else if (granularity === 'week') {
+          start = startOfWeek(date, { weekStartsOn: 0 });
+          end = endOfWeek(date, { weekStartsOn: 0 });
+          label = `Week of ${format(start, 'MMM d')}`;
+        } else {
+          start = startOfDay(date);
+          end = endOfDay(date);
+          label = format(date, 'MMM dd');
+        }
+
+        const count = results.filter((r) => {
+          if (!r.coachingDate) return false;
+          const d = new Date(r.coachingDate);
+          return d >= start && d <= end;
+        }).length;
+
+        return { date: label, count };
+      });
+
+      return {
+        summary,
+        timelinessBreakdown: [
+          { name: 'Early', value: summary.early },
+          { name: 'On-Time', value: results.filter(r => r.status === 'On-Time').length },
+          { name: 'Late', value: summary.late },
+          { name: 'Overdue', value: summary.overdue },
+          { name: 'Not Started', value: summary.notStarted },
+        ],
+        supervisorAccountability,
+        agentCoverage,
+        overdueTracker,
+        pendingTracker,
+        activityTrend,
+      };
+    } catch (error) {
+      console.error('[COACHING_STATS] ERROR:', error);
+      throw error;
+    }
+  }
+
+  // Consistent helper for array inputs
+  private normalizeArray(val: any): string[] {
+    if (!val) return [];
+    if (Array.isArray(val)) return val.map(v => String(v).trim()).filter(Boolean);
+    if (typeof val === 'string' && val.includes(',')) {
+      return val.split(',').map(v => v.trim()).filter(Boolean);
+    }
+    return [String(val).trim()].filter(Boolean);
+  }
+
+  private getEmptyCoachingStats() {
+    return {
+      summary: {
+        totalAudits: 0,
+        completed: 0,
+        complianceRate: 0,
+        onTimeRate: 0,
+        early: 0,
+        late: 0,
+        overdue: 0,
+        notStarted: 0,
+        pending: 0,
+      },
+      timelinessBreakdown: [],
+      supervisorAccountability: [],
+      agentCoverage: [],
+      overdueTracker: [],
+      pendingTracker: [],
+      activityTrend: [],
+    };
+  }
+
   private getEmptyStats() {
     return {
       summary: {

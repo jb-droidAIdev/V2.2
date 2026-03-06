@@ -97,12 +97,18 @@ export class DashboardService {
       };
 
       // 1. Date Range
+      const now = new Date();
       if (filters.startDate || filters.endDate) {
         where.submittedAt = {};
-        if (filters.startDate)
-          where.submittedAt.gte = new Date(filters.startDate);
-        if (filters.endDate)
-          where.submittedAt.lte = endOfDay(new Date(filters.endDate));
+        if (filters.startDate) {
+          const sd = new Date(filters.startDate);
+          if (!isNaN(sd.getTime())) where.submittedAt.gte = sd;
+        }
+        if (filters.endDate) {
+          const ed = new Date(filters.endDate);
+          if (!isNaN(ed.getTime())) where.submittedAt.lte = endOfDay(ed);
+        }
+        if (Object.keys(where.submittedAt).length === 0) delete where.submittedAt;
       }
 
       // 2. Campaigns & Teams
@@ -253,22 +259,20 @@ export class DashboardService {
 
       // 2. Trend Data
       const granularity = filters.granularity || 'day';
-      const now = new Date();
-      // Default ranges if not provided
-      const startDate = filters.startDate
-        ? new Date(filters.startDate)
-        : granularity === 'month'
-          ? subDays(now, 365)
-          : granularity === 'week'
-            ? subDays(now, 90)
-            : subDays(now, 13);
-      const endDate = filters.endDate ? new Date(filters.endDate) : now;
+
+      let startDate = filters.startDate ? new Date(filters.startDate) : null;
+      if (!startDate || isNaN(startDate.getTime())) {
+        startDate = granularity === 'month' ? subDays(now, 365) : granularity === 'week' ? subDays(now, 90) : subDays(now, 13);
+      }
+
+      let endDate = filters.endDate ? new Date(filters.endDate) : now;
+      if (isNaN(endDate.getTime())) endDate = now;
 
       let interval;
       if (granularity === 'month') {
         interval = eachMonthOfInterval({ start: startDate, end: endDate });
       } else if (granularity === 'week') {
-        interval = eachWeekOfInterval({ start: startDate, end: endDate });
+        interval = eachWeekOfInterval({ start: startDate, end: endDate }, { weekStartsOn: 0 });
       } else {
         interval = eachDayOfInterval({ start: startDate, end: endDate });
       }
@@ -790,8 +794,14 @@ export class DashboardService {
       // Filters
       if (filters.startDate || filters.endDate) {
         where.releasedAt = { not: null };
-        if (filters.startDate) where.releasedAt.gte = new Date(filters.startDate);
-        if (filters.endDate) where.releasedAt.lte = endOfDay(new Date(filters.endDate));
+        if (filters.startDate) {
+          const sd = new Date(filters.startDate);
+          if (!isNaN(sd.getTime())) where.releasedAt.gte = sd;
+        }
+        if (filters.endDate) {
+          const ed = new Date(filters.endDate);
+          if (!isNaN(ed.getTime())) where.releasedAt.lte = endOfDay(ed);
+        }
       }
 
       const campaignIds = this.normalizeArray(filters.campaignId);
@@ -954,13 +964,48 @@ export class DashboardService {
         .filter(r => r.isReleased && !r.acknowledged)
         .sort((a, b) => b.sentDate.getTime() - a.sentDate.getTime());
 
-      let trendStart = filters.startDate ? new Date(filters.startDate) : subDays(now, 14);
-      let trendEnd = filters.endDate ? new Date(filters.endDate) : now;
-      const trendRange = eachDayOfInterval({ start: trendStart, end: trendEnd });
+      // Activity Trend with Granularity
+      const granularity = filters.granularity || 'day';
+      let trendStart = filters.startDate ? new Date(filters.startDate) : null;
+      if (!trendStart || isNaN(trendStart.getTime())) trendStart = subDays(now, 14);
+      trendStart = startOfDay(trendStart);
 
-      const activityTrend = trendRange.map(date => {
-        const label = format(date, 'MMM dd');
-        const count = results.filter(r => r.coachingDate && format(new Date(r.coachingDate), 'yyyy-MM-dd') === format(date, 'yyyy-MM-dd')).length;
+      let trendEnd = filters.endDate ? new Date(filters.endDate) : now;
+      if (isNaN(trendEnd.getTime())) trendEnd = now;
+      trendEnd = endOfDay(trendEnd);
+
+      let interval;
+      if (granularity === 'month') {
+        interval = eachMonthOfInterval({ start: trendStart, end: trendEnd });
+      } else if (granularity === 'week') {
+        interval = eachWeekOfInterval({ start: trendStart, end: trendEnd }, { weekStartsOn: 0 }); // 0 = Sunday
+      } else {
+        interval = eachDayOfInterval({ start: trendStart, end: trendEnd });
+      }
+
+      const activityTrend = interval.map((date) => {
+        let start, end, label;
+
+        if (granularity === 'month') {
+          start = startOfMonth(date);
+          end = endOfMonth(date);
+          label = format(date, 'MMM yyyy');
+        } else if (granularity === 'week') {
+          start = startOfWeek(date, { weekStartsOn: 0 });
+          end = endOfWeek(date, { weekStartsOn: 0 });
+          label = `Week of ${format(start, 'MMM d')}`;
+        } else {
+          start = startOfDay(date);
+          end = endOfDay(date);
+          label = format(date, 'MMM dd');
+        }
+
+        const count = results.filter((r) => {
+          if (!r.coachingDate) return false;
+          const d = new Date(r.coachingDate);
+          return d >= start && d <= end;
+        }).length;
+
         return { date: label, count };
       });
 

@@ -17,7 +17,7 @@ async function main() {
         { code: 'PAGE_FORMS', module: 'Page Access', description: 'Grants access to the Forms module.' },
         { code: 'PAGE_ADMIN', module: 'Page Access', description: 'Grants access to the Admin module.' },
         { code: 'USER_MANAGE', module: 'System', description: 'Grants ability to manage system users.' },
-        { code: 'CAMPAIGN_MANAGE', module: 'System', description: 'Grants ability to manage system campaigns.' },
+        { code: 'CAMPAIGN_MANAGE', module: 'System', description: 'Grants ability to manage configurations, folder grouping, and ZTP thresholds.' },
         { code: '*', module: 'System', description: 'Grants unlimited Super Admin wildcard access.' },
         { code: 'AUDIT_CREATE', module: 'Audit', description: 'Grants ability to create and conduct quality audits.' },
         { code: 'AUDIT_VIEW_ALL', module: 'Audit', description: 'Grants ability to view all audits across the system.' },

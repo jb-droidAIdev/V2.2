@@ -13,7 +13,7 @@ export class AuditService {
   constructor(
     private prisma: PrismaService,
     private mailService: MailService,
-  ) {}
+  ) { }
 
   async getActiveAudit(auditorId: string) {
     const audit = await this.prisma.audit.findFirst({
@@ -179,6 +179,7 @@ export class AuditService {
           AuditStatus.RELEASED,
           AuditStatus.DISPUTED,
           AuditStatus.REAPPEALED,
+          (AuditStatus as any).ACKNOWLEDGED,
         ],
       },
     };
@@ -601,10 +602,20 @@ export class AuditService {
           select: { id: true, name: true, eid: true },
         },
         campaign: {
-          select: { id: true, name: true, projectCode: true },
+          select: {
+            id: true,
+            name: true,
+            projectCode: true,
+            ztpWindowDays: true,
+            ztpMilestones: true,
+            ztpAckSlaHours: true
+          },
         },
         sampledTicket: {
           include: { ticket: true },
+        },
+        coachingLog: {
+          select: { id: true, releasedAt: true, agentAckAt: true, supervisorId: true },
         },
       },
     });
@@ -654,7 +665,8 @@ export class AuditService {
     // ENRICHMENT: Calculate ZTP Milestones for the preview
     const enrichedScores = await Promise.all(
       audit.scores.map(async (score) => {
-        if (!score.isFailed || !audit.submittedAt)
+        const anyDate = audit.submittedAt || audit.releasedAt || audit.startedAt;
+        if (!score.isFailed || !anyDate)
           return { ...score, reachedMilestone: null };
 
         const parameterName = (
@@ -662,30 +674,78 @@ export class AuditService {
           score.criterion?.title ||
           'Unknown Parameter'
         ).trim();
-        const auditDate = new Date(audit.submittedAt);
-        const windowStart = new Date(auditDate);
-        windowStart.setDate(windowStart.getDate() - 30);
 
-        // Count infractions for this agent/cat in the 30d window leading to THIS audit
-        const count = await this.prisma.auditScore.count({
+        const categoryName = (
+          score.categoryLabel ||
+          score.criterion?.categoryName ||
+          'General'
+        ).trim();
+
+        const auditDate = new Date(audit.submittedAt || audit.releasedAt || (audit as any).startedAt);
+        const windowStart = new Date(auditDate);
+
+        const ztpWindowDays = audit.campaign?.ztpWindowDays ?? 30;
+        const milestones = (audit.campaign?.ztpMilestones as number[]) ?? [3, 6, 9, 12, 15];
+
+        windowStart.setDate(windowStart.getDate() - ztpWindowDays);
+
+        // Define valid statuses for ZTP counting (matches dashboard)
+        const validStatuses = [
+          AuditStatus.RELEASED,
+          AuditStatus.DISPUTED,
+          AuditStatus.REAPPEALED,
+          AuditStatus.ACKNOWLEDGED,
+        ];
+
+        // ZTP logic: Count total infractions in THIS category up to THIS audit's date
+        const categoryCount = await this.prisma.auditScore.count({
           where: {
             isFailed: true,
-            criterionTitle: parameterName,
             audit: {
+              status: { in: validStatuses },
               agentId: audit.agentId,
-              submittedAt: {
-                gte: windowStart,
-                lte: auditDate,
-              },
+              campaignId: audit.campaignId,
+              submittedAt: { gte: windowStart, lte: auditDate },
             },
+            OR: [
+              { categoryLabel: categoryName },
+              { categoryLabel: null, criterion: { categoryName: categoryName } },
+            ],
           },
         });
 
-        // If this specific audit caused hitting a milestone
-        const milestones = [3, 6, 9, 12, 15];
-        const reachedMilestone = milestones.includes(count) ? count : null;
+        // Specific parameter infractions
+        const parameterCount = await this.prisma.auditScore.count({
+          where: {
+            isFailed: true,
+            audit: {
+              status: { in: validStatuses },
+              agentId: audit.agentId,
+              campaignId: audit.campaignId,
+              submittedAt: { gte: windowStart, lte: auditDate },
+            },
+            OR: [
+              { criterionTitle: parameterName },
+              { criterionTitle: null, criterion: { title: parameterName } },
+            ],
+          },
+        });
 
-        return { ...score, reachedMilestone };
+        const sortedMilestones = [...milestones].sort((a, b) => a - b);
+
+        const reachedMilestone = [...sortedMilestones]
+          .reverse()
+          .find((m) => parameterCount >= m) || null;
+        const nextMilestone =
+          sortedMilestones.find((m) => m > parameterCount) || null;
+
+        return {
+          ...score,
+          reachedMilestone,
+          ztpCount: categoryCount,
+          ztpNextMilestone: nextMilestone,
+          parameterZtpCount: parameterCount
+        };
       }),
     );
 
@@ -882,7 +942,10 @@ export class AuditService {
     // 3. Official Submission -> Auto Release protocol
     const now = new Date();
     const deadline = new Date(now);
-    deadline.setDate(deadline.getDate() + 2); // 48 hours / 2 days SLA
+
+    // Use Campaign config for SLA (default 48 hours)
+    const slaHours = audit.campaign?.ztpAckSlaHours ?? 48;
+    deadline.setHours(deadline.getHours() + slaHours);
 
     const updatedAudit = await this.prisma.audit.update({
       where: { id },

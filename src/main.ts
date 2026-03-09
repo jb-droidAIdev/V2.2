@@ -9,6 +9,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.use(helmet());
   app.use(compression());
+  // NOTE: No global prefix needed — Next.js proxy (next.config.ts) strips /api before forwarding
   // app.setGlobalPrefix('api');
   app.enableCors({
     origin: [

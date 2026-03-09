@@ -10,7 +10,7 @@ import * as bcrypt from 'bcrypt';
 @Injectable()
 // Refreshing types
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async findByName(name: string): Promise<User | null> {
     if (!name) return null;
@@ -89,10 +89,30 @@ export class UsersService {
         });
         const campaignNames = assignments.map((a) => a.campaign.name);
 
+        const managementRoles = [
+          'ADMIN',
+          'QA',
+          'QA_TL',
+          'QA_MANAGER',
+          'OPS_TL',
+          'OPS_MANAGER',
+          'SDM',
+        ];
+
+        const hasCampaignManage =
+          user.permissions?.includes('CAMPAIGN_MANAGE') ||
+          user.permissions?.includes('*');
+
         where.OR = [
           { employeeTeam: user.employeeTeam },
           { employeeTeam: { in: campaignNames } },
         ];
+
+        // If they have Campaign Manage, they MUST be able to see all management profiles
+        // (the "Non Agents" tab in Dossier) to perform assignments
+        if (hasCampaignManage) {
+          where.OR.push({ role: { in: managementRoles } });
+        }
       }
 
       const queryOptions: any = {

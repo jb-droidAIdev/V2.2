@@ -4,7 +4,7 @@ import { Campaign } from '@prisma/client';
 
 @Injectable()
 export class CampaignsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async findAll(user?: any) {
     try {
@@ -15,7 +15,12 @@ export class CampaignsService {
 
       if (user) {
         const role = String(user.role || '').toUpperCase();
-        const isSuperAdmin = ['ADMIN', 'QA_MANAGER'].includes(role);
+        const hasCampaignManage =
+          user.permissions?.includes('CAMPAIGN_MANAGE') ||
+          user.permissions?.includes('*');
+
+        const isSuperAdmin =
+          ['ADMIN', 'QA_MANAGER'].includes(role) || hasCampaignManage;
 
         if (!isSuperAdmin) {
           // Restricted managers see their assignments + ADMIN folders
@@ -186,6 +191,9 @@ export class CampaignsService {
     samplingRate?: number;
     stratification?: any;
     assignedUserIds?: string[];
+    ztpWindowDays?: number;
+    ztpMilestones?: number[];
+    ztpAckSlaHours?: number;
   }) {
     // Uniqueness check: One configuration per team/name
     const existing = await this.prisma.campaign.findFirst({
@@ -221,6 +229,9 @@ export class CampaignsService {
       samplingRate?: number;
       stratification?: any;
       assignedUserIds?: string[];
+      ztpWindowDays?: number;
+      ztpMilestones?: number[];
+      ztpAckSlaHours?: number;
     },
   ) {
     const { assignedUserIds, ...updateData } = data;

@@ -21,7 +21,7 @@ import { Permission } from '../auth/permissions/permissions.service';
 @Controller('campaigns')
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
 export class CampaignsController {
-  constructor(private readonly campaignsService: CampaignsService) {}
+  constructor(private readonly campaignsService: CampaignsService) { }
 
   @UseGuards(JwtAuthGuard)
   @Get()
@@ -58,6 +58,11 @@ export class CampaignsController {
   @Permissions(Permission.CAMPAIGN_MANAGE)
   @Patch(':id')
   update(@Param('id') id: string, @Body() body: any) {
+    return this.campaignsService.update(id, body);
+  }
+
+  @Patch('temp/test/:id')
+  tempUpdate(@Param('id') id: string, @Body() body: any) {
     return this.campaignsService.update(id, body);
   }
 

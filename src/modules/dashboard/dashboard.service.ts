@@ -78,13 +78,19 @@ export class DashboardService {
       const where: any = {
         status: {
           in: [
+            AuditStatus.SUBMITTED,
             AuditStatus.RELEASED,
             AuditStatus.DISPUTED,
             AuditStatus.REAPPEALED,
-            AuditStatus.ACKNOWLEDGED,
+            (AuditStatus as any).ACKNOWLEDGED,
           ],
         },
       };
+
+      // 8. Role-based Security for Agent (Agents only see RELEASED data onwards)
+      if (role === 'AGENT') {
+        where.status.in = where.status.in.filter((s) => s !== AuditStatus.SUBMITTED);
+      }
 
       // Initialize agent filter object early to support merging
       where.agent = {};
@@ -229,6 +235,7 @@ export class DashboardService {
         where,
         select: {
           id: true,
+          agentId: true,
           score: true,
           status: true,
           submittedAt: true,
@@ -361,27 +368,26 @@ export class DashboardService {
         }))
         .sort((a, b) => b.value - a.value);
 
-      // Agent Scores Aggregation for Flip Card
-      const agentScoresRaw = await this.prisma.audit.groupBy({
-        by: ['agentId'],
-        where,
-        _count: { id: true },
-        _avg: { score: true },
+      // Agent Scores Aggregation - Manually from audits array to bypass groupBy relation filter limits
+      const agentAggregation: Record<string, { count: number; totalScore: number }> = {};
+      audits.forEach((a) => {
+        if (!agentAggregation[a.agentId])
+          agentAggregation[a.agentId] = { count: 0, totalScore: 0 };
+        agentAggregation[a.agentId].count++;
+        agentAggregation[a.agentId].totalScore += a.score || 0;
       });
 
       const agentScores = await Promise.all(
-        agentScoresRaw.map(async (item) => {
+        Object.entries(agentAggregation).map(async ([agentId, data]) => {
           const agent = await this.prisma.user.findUnique({
-            where: { id: item.agentId },
+            where: { id: agentId },
             select: { name: true },
           });
           return {
-            agentId: item.agentId,
+            agentId,
             agentName: agent?.name || 'Unknown Agent',
-            auditCount: item._count.id,
-            avgScore: item._avg.score
-              ? parseFloat(item._avg.score.toFixed(2))
-              : 0,
+            auditCount: data.count,
+            avgScore: parseFloat((data.totalScore / data.count).toFixed(2)),
           };
         }),
       );
@@ -406,14 +412,40 @@ export class DashboardService {
 
       // For Management: Calculate all active progressions across the scope
       if (user.role !== Role.AGENT) {
-        // Fetch ALL failures for ALL agents in scope, plus 30-day lookback for window context
-        const bufferStartDate = subDays(startDate, 30);
+        // Fetch failures for all agents in scope. We look back 60 days to ensure we have enough
+        // context to calculate the rolling 30-day window for any infractions found in the current period.
+        const bufferStartDate = subDays(startDate, 60);
+
         const allFailuresInScope = await this.prisma.auditScore.findMany({
           where: {
             isFailed: true,
+            criterion: {
+              categoryName: {
+                not: 'Non-Critical',
+                mode: 'insensitive',
+              },
+            },
+            categoryLabel: {
+              not: 'Non-Critical',
+              mode: 'insensitive',
+            },
             audit: {
-              ...where,
+              // We intentionally ignore campaign/agent filters here to find the FULL rolling history
+              // but we still restrict to what the user CAN see (assignedCampaignIds)
+              campaignId:
+                assignedCampaignIds.length > 0
+                  ? { in: assignedCampaignIds }
+                  : undefined,
               submittedAt: { gte: bufferStartDate, lte: endDate },
+              status: {
+                in: [
+                  AuditStatus.SUBMITTED,
+                  AuditStatus.RELEASED,
+                  AuditStatus.DISPUTED,
+                  AuditStatus.REAPPEALED,
+                  AuditStatus.ACKNOWLEDGED,
+                ],
+              },
             },
           },
           select: {
@@ -424,62 +456,76 @@ export class DashboardService {
               select: {
                 agentId: true,
                 submittedAt: true,
-                agent: { select: { name: true, employeeTeam: true } },
-                campaign: { select: { name: true } },
+                agent: { select: { id: true, name: true, employeeTeam: true } },
+                campaign: { select: { id: true, name: true, ztpMilestones: true } },
               },
             },
           },
         });
 
-        const groupedByAgentCat: Record<string, Record<string, any[]>> = {};
+
+        const groupedByAgentParam: Record<string, Record<string, any[]>> = {};
         allFailuresInScope.forEach((f) => {
           const agentId = f.audit.agentId;
-          const paramStr = (
+          // Normalize parameter name for cross-version tracking
+          const rawParam = (
             f.criterionTitle ||
             f.criterion?.title ||
-            'Unknown Parameter'
-          ).trim();
-          if (!groupedByAgentCat[agentId]) groupedByAgentCat[agentId] = {};
-          if (!groupedByAgentCat[agentId][paramStr])
-            groupedByAgentCat[agentId][paramStr] = [];
-          groupedByAgentCat[agentId][paramStr].push(f);
+            'General'
+          );
+          const paramStr = rawParam.trim();
+
+          if (!groupedByAgentParam[agentId]) groupedByAgentParam[agentId] = {};
+          if (!groupedByAgentParam[agentId][paramStr])
+            groupedByAgentParam[agentId][paramStr] = [];
+          groupedByAgentParam[agentId][paramStr].push(f);
         });
 
-        for (const [agentId, params] of Object.entries(groupedByAgentCat)) {
-          for (const [category, instances] of Object.entries(params)) {
+
+        for (const [agentId, params] of Object.entries(groupedByAgentParam)) {
+          for (const [parameter, instances] of Object.entries(params)) {
             const sortedInstances = [...instances].sort(
               (a, b) =>
                 new Date(b.audit.submittedAt).getTime() -
                 new Date(a.audit.submittedAt).getTime(),
             );
 
-            // Only consider if the most recent infraction is within our primary filter range
             const latest = sortedInstances[0];
             const lastInfractionDate = new Date(latest.audit.submittedAt);
-            if (lastInfractionDate < startDate) continue;
-
             const windowStart = subDays(lastInfractionDate, 30);
+
             const count = instances.filter((i) => {
               const d = new Date(i.audit.submittedAt);
               return d >= windowStart && d <= lastInfractionDate;
             }).length;
 
-            if (count >= 3) {
+            const milestones = (latest.audit.campaign?.ztpMilestones as number[]) ?? [3, 6, 9, 12, 15];
+            const sortedMilestones = [...milestones].sort((a, b) => a - b);
+
+
+            if (count >= sortedMilestones[0]) {
               let sanction = 'Written Warning';
-              if (count >= 15) sanction = 'Termination';
-              else if (count >= 12) sanction = 'Suspension (5 Days)';
-              else if (count >= 9) sanction = 'Suspension (3 Days)';
-              else if (count >= 6) sanction = 'Final Written Warning';
+              const hitIdx = [...sortedMilestones]
+                .reverse()
+                .findIndex((m) => count >= m);
+
+              if (hitIdx === 0) sanction = 'Termination';
+              else if (hitIdx === 1) sanction = 'Suspension (5 Days)';
+              else if (hitIdx === 2) sanction = 'Suspension (3 Days)';
+              else if (hitIdx === 3) sanction = 'Final Written Warning';
+              else sanction = 'Written Warning';
 
               activeProgressions.push({
                 agentId,
-                agentName: latest.audit.agent?.name || 'Unknown',
+                agentName: latest.audit.agent?.name || (latest.audit as any).agent?.id || agentId || 'Unknown',
                 teamName: latest.audit.agent?.employeeTeam || 'Direct Report',
-                campaign:
-                  latest.audit.campaign?.name ||
-                  latest.audit.agent?.employeeTeam ||
-                  'N/A',
-                category,
+                campaign: latest.audit.campaign?.name || 'N/A',
+                category: (
+                  latest.categoryLabel ||
+                  latest.criterion?.categoryName ||
+                  'General'
+                ).trim(),
+                parameter: (parameter || 'General').trim(),
                 count,
                 sanction,
                 lastInfraction: lastInfractionDate,
@@ -496,6 +542,16 @@ export class DashboardService {
         const agentFailures = await this.prisma.auditScore.findMany({
           where: {
             isFailed: true,
+            criterion: {
+              categoryName: {
+                not: 'Non-Critical',
+                mode: 'insensitive',
+              },
+            },
+            categoryLabel: {
+              not: 'Non-Critical',
+              mode: 'insensitive',
+            },
             audit: {
               agentId: singleAgentId,
               status: {
@@ -508,12 +564,10 @@ export class DashboardService {
               },
             },
           },
-          select: {
-            categoryLabel: true,
-            criterionTitle: true,
-            criterion: { select: { categoryName: true, title: true } },
-            audit: { select: { submittedAt: true } },
-          },
+          include: {
+            audit: { include: { campaign: true } },
+            criterion: true
+          }
         });
 
         const failuresByParam: Record<string, any[]> = {};
@@ -521,40 +575,52 @@ export class DashboardService {
           const paramStr = (
             f.criterionTitle ||
             f.criterion?.title ||
-            'Unknown Parameter'
+            'General'
           ).trim();
           if (!failuresByParam[paramStr]) failuresByParam[paramStr] = [];
           failuresByParam[paramStr].push(f);
         });
 
         policyProgress = Object.entries(failuresByParam)
-          .map(([category, instances]) => {
+          .map(([parameter, instances]) => {
             const sortedInstances = [...instances].sort(
               (a, b) =>
                 new Date(b.audit.submittedAt).getTime() -
                 new Date(a.audit.submittedAt).getTime(),
             );
-            const lastInfractionDate = new Date(
-              sortedInstances[0].audit.submittedAt,
-            );
+            const latest = sortedInstances[0];
+            const lastInfractionDate = new Date(latest.audit.submittedAt);
             const windowStart = subDays(lastInfractionDate, 30);
             const count = instances.filter((i) => {
               const d = new Date(i.audit.submittedAt);
               return d >= windowStart && d <= lastInfractionDate;
             }).length;
 
+            const milestones = (latest.audit.campaign?.ztpMilestones as number[]) ?? [3, 6, 9, 12, 15];
+            const sortedMilestones = [...milestones].sort((a, b) => a - b);
+
             let sanction = null;
-            if (count >= 15) sanction = 'For Termination';
-            else if (count >= 12) sanction = 'For Suspension (5 Days)';
-            else if (count >= 9) sanction = 'For Suspension (3 Days)';
-            else if (count >= 6) sanction = 'For Final Written Warning';
-            else if (count >= 3) sanction = 'For Written Warning';
+            if (count >= sortedMilestones[0]) {
+              const hitIdx = [...sortedMilestones]
+                .reverse()
+                .findIndex((m) => count >= m);
+              if (hitIdx === 0) sanction = 'For Termination';
+              else if (hitIdx === 1) sanction = 'For Suspension (5 Days)';
+              else if (hitIdx === 2) sanction = 'For Suspension (3 Days)';
+              else if (hitIdx === 3) sanction = 'For Final Written Warning';
+              else sanction = 'For Written Warning';
+            }
 
             return {
-              category,
+              category:
+                latest.categoryLabel ||
+                latest.criterion?.categoryName ||
+                'General',
+              parameter,
               count,
               lastInfraction: lastInfractionDate,
               sanction,
+              milestones: sortedMilestones, // Pass milestones to frontend
             };
           })
           .sort((a, b) => b.count - a.count);
@@ -610,7 +676,7 @@ export class DashboardService {
       };
     } catch (error) {
       console.error('[DASHBOARD] getStats ERROR:', error);
-      return { error: error.message, stack: error.stack };
+      return this.getEmptyStats();
     }
   }
 

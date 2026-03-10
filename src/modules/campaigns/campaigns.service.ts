@@ -1,10 +1,14 @@
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
+import { SlaEngineService } from '../sla-engine/sla-engine.service';
 import { Campaign } from '@prisma/client';
 
 @Injectable()
 export class CampaignsService {
-  constructor(private prisma: PrismaService) { }
+  constructor(
+    private prisma: PrismaService,
+    private slaEngine: SlaEngineService,
+  ) { }
 
   async findAll(user?: any) {
     try {
@@ -194,6 +198,8 @@ export class CampaignsService {
     ztpWindowDays?: number;
     ztpMilestones?: number[];
     ztpAckSlaHours?: number;
+    disputeWindowDays?: number;
+    reappealWindowDays?: number;
   }) {
     // Uniqueness check: One configuration per team/name
     const existing = await this.prisma.campaign.findFirst({
@@ -232,6 +238,8 @@ export class CampaignsService {
       ztpWindowDays?: number;
       ztpMilestones?: number[];
       ztpAckSlaHours?: number;
+      disputeWindowDays?: number;
+      reappealWindowDays?: number;
     },
   ) {
     const { assignedUserIds, ...updateData } = data;
@@ -248,6 +256,37 @@ export class CampaignsService {
             campaignId: id,
             userId,
           })),
+        });
+      }
+    }
+
+    // If SLA changes, update all active (RELEASED) audits that haven't been acknowledged yet
+    if (updateData.ztpAckSlaHours !== undefined) {
+      const activeAudits = await this.prisma.audit.findMany({
+        where: {
+          campaignId: id,
+          status: 'RELEASED',
+          releasedAt: { not: null },
+        },
+        select: { id: true, releasedAt: true },
+      });
+
+      const slaHours = updateData.ztpAckSlaHours;
+      const slaDays = Math.max(1, Math.round(slaHours / 24));
+
+      for (const audit of activeAudits) {
+        if (!audit.releasedAt) continue;
+
+        // Use the same SLA engine logic as ReleaseService/AuditService
+        const newDeadline = await this.slaEngine.calculateDueDate(
+          new Date(audit.releasedAt),
+          slaDays,
+          id
+        );
+
+        await this.prisma.audit.update({
+          where: { id: audit.id },
+          data: { agentAckDeadline: newDeadline },
         });
       }
     }

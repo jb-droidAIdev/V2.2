@@ -8,7 +8,7 @@ export class ReleaseService {
   constructor(
     private prisma: PrismaService,
     private slaEngine: SlaEngineService,
-  ) {}
+  ) { }
 
   async releaseAudits(auditIds: string[], userId: string) {
     const results = [];
@@ -17,11 +17,17 @@ export class ReleaseService {
       const audit = await this.prisma.audit.findUnique({ where: { id } });
       if (!audit || audit.status !== AuditStatus.SUBMITTED) continue;
 
-      // Calculate Deadline (3 Business Days from NOW)
+      // Calculate Deadline (Based on Campaign SLA - Default 3 Business Days)
+      const campaign = await this.prisma.campaign.findUnique({
+        where: { id: audit.campaignId },
+        select: { ztpAckSlaHours: true },
+      });
+      const slaDays = Math.max(1, Math.round((campaign?.ztpAckSlaHours ?? 72) / 24));
+
       const now = new Date();
       const deadline = await this.slaEngine.calculateDueDate(
         now,
-        3,
+        slaDays,
         audit.campaignId,
       );
 

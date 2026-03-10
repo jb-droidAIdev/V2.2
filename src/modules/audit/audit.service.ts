@@ -7,12 +7,15 @@ import {
 import { PrismaService } from '../../prisma.service';
 import { AuditStatus, Role } from '@prisma/client';
 import { MailService } from '../mail/mail.service';
+import { SlaEngineService } from '../sla-engine/sla-engine.service';
+import { subDays } from 'date-fns';
 
 @Injectable()
 export class AuditService {
   constructor(
     private prisma: PrismaService,
     private mailService: MailService,
+    private slaEngine: SlaEngineService,
   ) { }
 
   async getActiveAudit(auditorId: string) {
@@ -663,91 +666,57 @@ export class AuditService {
     }
 
     // ENRICHMENT: Calculate ZTP Milestones for the preview
-    const enrichedScores = await Promise.all(
-      audit.scores.map(async (score) => {
-        const anyDate = audit.submittedAt || audit.releasedAt || audit.startedAt;
-        if (!score.isFailed || !anyDate)
-          return { ...score, reachedMilestone: null };
+    // Optimized: Fetch all relevant failures for this agent/window ONCE instead of N times
+    const auditDate = new Date(audit.submittedAt || audit.releasedAt || (audit as any).startedAt);
+    const ztpWindowDays = audit.campaign?.ztpWindowDays ?? 30;
+    const windowStart = subDays(auditDate, ztpWindowDays);
+    const validStatuses = [AuditStatus.RELEASED, AuditStatus.DISPUTED, AuditStatus.REAPPEALED, AuditStatus.ACKNOWLEDGED];
 
-        const parameterName = (
-          score.criterionTitle ||
-          score.criterion?.title ||
-          'Unknown Parameter'
-        ).trim();
+    const allFailuresInWindow = await this.prisma.auditScore.findMany({
+      where: {
+        isFailed: true,
+        audit: {
+          status: { in: validStatuses },
+          agentId: audit.agentId,
+          campaignId: audit.campaignId,
+          submittedAt: { gte: windowStart, lte: auditDate },
+        }
+      },
+      select: { categoryLabel: true, criterionTitle: true, criterion: { select: { categoryName: true, title: true } } }
+    });
 
-        const categoryName = (
-          score.categoryLabel ||
-          score.criterion?.categoryName ||
-          'General'
-        ).trim();
+    const enrichedScores = audit.scores.map((score) => {
+      const anyDate = audit.submittedAt || audit.releasedAt || audit.startedAt;
+      if (!score.isFailed || !anyDate)
+        return { ...score, reachedMilestone: null };
 
-        const auditDate = new Date(audit.submittedAt || audit.releasedAt || (audit as any).startedAt);
-        const windowStart = new Date(auditDate);
+      const parameterName = (score.criterionTitle || score.criterion?.title || 'Unknown Parameter').trim();
+      const categoryName = (score.categoryLabel || score.criterion?.categoryName || 'General').trim();
 
-        const ztpWindowDays = audit.campaign?.ztpWindowDays ?? 30;
-        const milestones = (audit.campaign?.ztpMilestones as number[]) ?? [3, 6, 9, 12, 15];
+      const categoryCount = allFailuresInWindow.filter(f => {
+        const fCat = (f.categoryLabel || f.criterion?.categoryName || 'General').trim();
+        return fCat === categoryName;
+      }).length;
 
-        windowStart.setDate(windowStart.getDate() - ztpWindowDays);
+      const parameterCount = allFailuresInWindow.filter(f => {
+        const fParam = (f.criterionTitle || f.criterion?.title || 'Unknown Parameter').trim();
+        return fParam === parameterName;
+      }).length;
 
-        // Define valid statuses for ZTP counting (matches dashboard)
-        const validStatuses = [
-          AuditStatus.RELEASED,
-          AuditStatus.DISPUTED,
-          AuditStatus.REAPPEALED,
-          AuditStatus.ACKNOWLEDGED,
-        ];
+      const milestones = (audit.campaign?.ztpMilestones as number[]) ?? [3, 6, 9, 12, 15];
+      const sortedMilestones = [...milestones].sort((a, b) => a - b);
 
-        // ZTP logic: Count total infractions in THIS category up to THIS audit's date
-        const categoryCount = await this.prisma.auditScore.count({
-          where: {
-            isFailed: true,
-            audit: {
-              status: { in: validStatuses },
-              agentId: audit.agentId,
-              campaignId: audit.campaignId,
-              submittedAt: { gte: windowStart, lte: auditDate },
-            },
-            OR: [
-              { categoryLabel: categoryName },
-              { categoryLabel: null, criterion: { categoryName: categoryName } },
-            ],
-          },
-        });
+      const reachedMilestone = [...sortedMilestones].reverse().find((m) => parameterCount >= m) || null;
+      const nextMilestone = sortedMilestones.find((m) => m > parameterCount) || null;
 
-        // Specific parameter infractions
-        const parameterCount = await this.prisma.auditScore.count({
-          where: {
-            isFailed: true,
-            audit: {
-              status: { in: validStatuses },
-              agentId: audit.agentId,
-              campaignId: audit.campaignId,
-              submittedAt: { gte: windowStart, lte: auditDate },
-            },
-            OR: [
-              { criterionTitle: parameterName },
-              { criterionTitle: null, criterion: { title: parameterName } },
-            ],
-          },
-        });
-
-        const sortedMilestones = [...milestones].sort((a, b) => a - b);
-
-        const reachedMilestone = [...sortedMilestones]
-          .reverse()
-          .find((m) => parameterCount >= m) || null;
-        const nextMilestone =
-          sortedMilestones.find((m) => m > parameterCount) || null;
-
-        return {
-          ...score,
-          reachedMilestone,
-          ztpCount: categoryCount,
-          ztpNextMilestone: nextMilestone,
-          parameterZtpCount: parameterCount
-        };
-      }),
-    );
+      return {
+        ...score,
+        reachedMilestone,
+        ztpCount: categoryCount,
+        ztpNextMilestone: nextMilestone,
+        parameterZtpCount: parameterCount
+      };
+    });
 
     return { ...audit, scores: enrichedScores };
   }
@@ -941,11 +910,9 @@ export class AuditService {
 
     // 3. Official Submission -> Auto Release protocol
     const now = new Date();
-    const deadline = new Date(now);
-
-    // Use Campaign config for SLA (default 48 hours)
-    const slaHours = audit.campaign?.ztpAckSlaHours ?? 48;
-    deadline.setHours(deadline.getHours() + slaHours);
+    // Use Campaign config for SLA (default 2 business days)
+    const slaDays = Math.max(1, Math.round((audit.campaign?.ztpAckSlaHours ?? 48) / 24));
+    const deadline = await this.slaEngine.calculateDueDate(now, slaDays, audit.campaignId);
 
     const updatedAudit = await this.prisma.audit.update({
       where: { id },

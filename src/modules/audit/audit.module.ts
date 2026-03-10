@@ -4,13 +4,14 @@ import { AuditController } from './audit.controller';
 import { QaController } from './qa.controller';
 import { MailModule } from '../mail/mail.module';
 import { AuthModule } from '../auth/auth.module';
+import { SlaEngineModule } from '../sla-engine/sla-engine.module';
 import { CoachingLogController } from './coaching-log.controller';
 import { CoachingLogService } from './coaching-log.service';
 
 @Module({
-  imports: [MailModule, AuthModule],
+  imports: [MailModule, AuthModule, SlaEngineModule],
   controllers: [AuditController, QaController, CoachingLogController],
   providers: [AuditService, CoachingLogService],
   exports: [AuditService, CoachingLogService],
 })
-export class AuditModule {}
+export class AuditModule { }

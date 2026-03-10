@@ -17,7 +17,7 @@ export class DisputeService {
     private prisma: PrismaService,
     private auditService: AuditService,
     private mailService: MailService,
-  ) {}
+  ) { }
 
   async createDispute(
     auditId: string,
@@ -30,6 +30,7 @@ export class DisputeService {
         dispute: true,
         agent: true,
         auditor: true,
+        campaign: true,
       },
     });
 
@@ -43,9 +44,10 @@ export class DisputeService {
       new Date(),
       new Date(lastActionAt),
     );
-    if (daysDiff > 5)
+    const disputeWindow = audit.campaign?.disputeWindowDays ?? 5;
+    if (daysDiff > disputeWindow)
       throw new BadRequestException(
-        'Dispute must be filed within 5 business days',
+        `Dispute must be filed within ${disputeWindow} business days`,
       );
 
     if (!data.items || data.items.length === 0)
@@ -268,7 +270,7 @@ export class DisputeService {
       include: {
         items: true,
         audit: {
-          include: { agent: true, auditor: true },
+          include: { agent: true, auditor: true, campaign: true },
         },
       },
     });
@@ -286,9 +288,10 @@ export class DisputeService {
       new Date(),
       new Date(lastQaReview),
     );
-    if (daysDiff > 3)
+    const reappealWindow = dispute.audit.campaign?.reappealWindowDays ?? 3;
+    if (daysDiff > reappealWindow)
       throw new BadRequestException(
-        'Re-appeal must be filed within 3 business days',
+        `Re-appeal must be filed within ${reappealWindow} business days`,
       );
 
     const result = await this.prisma.$transaction(async (tx) => {
@@ -414,7 +417,7 @@ export class DisputeService {
 
         const finalVerdictLabel =
           anyFinalAccepted ||
-          allItems.every((i) => i.qaVerdict === DisputeVerdict.ACCEPTED)
+            allItems.every((i) => i.qaVerdict === DisputeVerdict.ACCEPTED)
             ? 'ACCEPTED'
             : 'REJECTED';
 

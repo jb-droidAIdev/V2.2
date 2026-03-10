@@ -45,6 +45,10 @@ model User {
   uploadedBatches            TicketUploadBatch[]
   userRole                   UserRole?                @relation(fields: [roleId], references: [id])
   customPermissions          UserPermission[]
+
+  @@index([employeeTeam])
+  @@index([role])
+  @@index([isActive])
 }
 
 model Campaign {
@@ -60,6 +64,8 @@ model Campaign {
   ztpAckSlaHours      Int                  @default(48)
   ztpMilestones       Int[]                @default([3, 6, 9, 12, 15])
   ztpWindowDays       Int                  @default(30)
+  disputeWindowDays   Int                  @default(5)
+  reappealWindowDays  Int                  @default(3)
   audits              Audit[]
   calibrationSessions CalibrationSession[] @relation("CampaignCalibrationSessions")
   qaAssignments       CampaignQA[]
@@ -225,6 +231,7 @@ model Audit {
   @@index([status])
   @@index([startedAt])
   @@index([submittedAt])
+  @@index([releasedAt])
 }
 
 model AuditUserView {
@@ -264,6 +271,9 @@ model AuditScore {
 
   @@unique([auditId, criterionId])
   @@index([auditId])
+  @@index([categoryLabel])
+  @@index([criterionTitle])
+  @@index([isFailed])
 }
 
 model AuditEvent {

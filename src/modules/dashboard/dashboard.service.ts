@@ -377,20 +377,21 @@ export class DashboardService {
         agentAggregation[a.agentId].totalScore += a.score || 0;
       });
 
-      const agentScores = await Promise.all(
-        Object.entries(agentAggregation).map(async ([agentId, data]) => {
-          const agent = await this.prisma.user.findUnique({
-            where: { id: agentId },
-            select: { name: true },
-          });
-          return {
-            agentId,
-            agentName: agent?.name || 'Unknown Agent',
-            auditCount: data.count,
-            avgScore: parseFloat((data.totalScore / data.count).toFixed(2)),
-          };
-        }),
-      );
+      const agentIdsForNames = Object.keys(agentAggregation);
+      const agents = await this.prisma.user.findMany({
+        where: { id: { in: agentIdsForNames } },
+        select: { id: true, name: true }
+      });
+      const agentMap = new Map(agents.map(a => [a.id, a.name]));
+
+      const agentScores = Object.entries(agentAggregation).map(([agentId, data]) => {
+        return {
+          agentId,
+          agentName: agentMap.get(agentId) || 'Unknown Agent',
+          auditCount: data.count,
+          avgScore: parseFloat((data.totalScore / data.count).toFixed(2)),
+        };
+      });
 
       // Sort by average score descending
       agentScores.sort((a, b) => b.avgScore - a.avgScore);
@@ -412,9 +413,9 @@ export class DashboardService {
 
       // For Management: Calculate all active progressions across the scope
       if (user.role !== Role.AGENT) {
-        // Fetch failures for all agents in scope. We look back 60 days to ensure we have enough
-        // context to calculate the rolling 30-day window for any infractions found in the current period.
-        const bufferStartDate = subDays(startDate, 60);
+        // Fetch failures for all agents in scope. We look back 365 days (max window support) to ensure we have enough
+        // context to calculate the rolling window for any infractions found in the current period.
+        const bufferStartDate = subDays(startDate, 365);
 
         const allFailuresInScope = await this.prisma.auditScore.findMany({
           where: {
@@ -457,7 +458,7 @@ export class DashboardService {
                 agentId: true,
                 submittedAt: true,
                 agent: { select: { id: true, name: true, employeeTeam: true } },
-                campaign: { select: { id: true, name: true, ztpMilestones: true } },
+                campaign: { select: { id: true, name: true, ztpMilestones: true, ztpWindowDays: true } },
               },
             },
           },
@@ -492,7 +493,8 @@ export class DashboardService {
 
             const latest = sortedInstances[0];
             const lastInfractionDate = new Date(latest.audit.submittedAt);
-            const windowStart = subDays(lastInfractionDate, 30);
+            const ztpWindowDays = latest.audit.campaign?.ztpWindowDays ?? 30;
+            const windowStart = subDays(lastInfractionDate, ztpWindowDays);
 
             const count = instances.filter((i) => {
               const d = new Date(i.audit.submittedAt);
@@ -590,7 +592,8 @@ export class DashboardService {
             );
             const latest = sortedInstances[0];
             const lastInfractionDate = new Date(latest.audit.submittedAt);
-            const windowStart = subDays(lastInfractionDate, 30);
+            const ztpWindowDays = latest.audit.campaign?.ztpWindowDays ?? 30;
+            const windowStart = subDays(lastInfractionDate, ztpWindowDays);
             const count = instances.filter((i) => {
               const d = new Date(i.audit.submittedAt);
               return d >= windowStart && d <= lastInfractionDate;
@@ -989,26 +992,33 @@ export class DashboardService {
 
       const agentCoverage = Array.from(agentMap.values()).map(a => ({
         ...a,
-        complianceRate: a.total > 0 ? ((a.total - a.breached) / a.total) * 100 : 0
+        complianceRate: a.total > 0 ? ((a.early + a.onTime) / a.total) * 100 : 0
       })).sort((a, b) => b.overdue - a.overdue);
 
       const supervisorAccountability = Array.from(supervisorMap.values()).map(s => ({
         ...s,
-        compliance: s.total > 0 ? ((s.total - s.breached) / s.total) * 100 : 0
+        compliance: s.total > 0 ? ((s.early + s.onTime) / s.total) * 100 : 0
       })).sort((a, b) => a.compliance - b.compliance);
 
       const totalAudits = results.length;
-      const totalBreached = results.filter(r => r.isBreached).length;
-      const complianceRate = totalAudits > 0 ? ((totalAudits - totalBreached) / totalAudits) * 100 : 0;
+      const earlyCount = results.filter(r => r.status === 'Early').length;
+      const onTimeCount = results.filter(r => r.status === 'On-Time').length;
+      const lateCount = results.filter(r => r.status === 'Late').length;
+
+      const totalCompliant = earlyCount + onTimeCount;
+      const totalReleased = earlyCount + onTimeCount + lateCount;
+
+      const complianceRate = totalAudits > 0 ? (totalCompliant / totalAudits) * 100 : 0;
+      const onTimeRate = totalReleased > 0 ? (totalCompliant / totalReleased) * 100 : 0;
 
       const summary = {
         totalAudits,
         completed: results.filter(r => r.acknowledged).length,
         pending: results.filter(r => r.isReleased && !r.acknowledged).length,
         complianceRate,
-        onTimeRate: complianceRate,
-        early: results.filter(r => r.status === 'Early').length,
-        late: results.filter(r => r.status === 'Late').length,
+        onTimeRate,
+        early: earlyCount,
+        late: lateCount,
         overdue: results.filter(r => r.status === 'Overdue').length,
         notStarted: results.filter(r => r.status === 'Not Started').length,
       };

@@ -917,13 +917,10 @@ export class AuditService {
     const updatedAudit = await this.prisma.audit.update({
       where: { id },
       data: {
-        status:
-          Math.round(percent) === 100
-            ? AuditStatus.ACKNOWLEDGED
-            : AuditStatus.RELEASED,
+        status: AuditStatus.RELEASED,
         submittedAt: now,
         releasedAt: now,
-        agentAckDeadline: Math.round(percent) === 100 ? null : deadline,
+        agentAckDeadline: deadline,
         score: percent,
         isAutoFailed,
         lastActionAt: now,

@@ -202,12 +202,10 @@ export class DisputeService {
           const audit = await tx.audit.findUnique({
             where: { id: item.dispute.auditId },
           });
-          const is100 = audit && Math.round(audit.score || 0) === 100;
-
           await tx.audit.update({
             where: { id: item.dispute.auditId },
             data: {
-              status: is100 ? AuditStatus.ACKNOWLEDGED : AuditStatus.RELEASED,
+              status: AuditStatus.RELEASED,
               lastActionAt: new Date(),
             },
           });
@@ -423,12 +421,10 @@ export class DisputeService {
 
         if (finalVerdictLabel === 'ACCEPTED') {
           const audit = await tx.audit.findUnique({ where: { id: auditId } });
-          const is100 = audit && Math.round(audit.score || 0) === 100;
-
           await tx.audit.update({
             where: { id: auditId },
             data: {
-              status: is100 ? AuditStatus.ACKNOWLEDGED : AuditStatus.RELEASED,
+              status: AuditStatus.RELEASED,
               lastActionAt: new Date(),
             },
           });

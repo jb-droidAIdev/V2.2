@@ -17,6 +17,7 @@ import {
   addDays,
   differenceInHours,
   isWeekend,
+  isSameDay,
 } from 'date-fns';
 
 @Injectable()
@@ -844,33 +845,18 @@ export class DashboardService {
         if (assignedCampaignIds.length === 0) return this.getEmptyCoachingStats();
       }
 
+      const requestedStart = filters.startDate ? startOfDay(new Date(filters.startDate)) : startOfDay(subDays(now, 14));
+      const requestedEnd = filters.endDate ? endOfDay(new Date(filters.endDate)) : endOfDay(now);
+
       const where: any = {
-        releasedAt: { not: null },
         status: { in: [AuditStatus.RELEASED, AuditStatus.ACKNOWLEDGED] },
-        agent: { is: {} },
-        OR: [
-          { score: { lt: 100 } },
-          { score: null }
-        ]
+        releasedAt: { gte: requestedStart, lte: requestedEnd },
       };
 
       if (role === 'AGENT') {
         where.agentId = user.id;
       } else if (restrictedRoles.includes(role)) {
         where.campaignId = { in: assignedCampaignIds };
-      }
-
-      // Filters
-      if (filters.startDate || filters.endDate) {
-        where.releasedAt = { not: null };
-        if (filters.startDate) {
-          const sd = new Date(filters.startDate);
-          if (!isNaN(sd.getTime())) where.releasedAt.gte = sd;
-        }
-        if (filters.endDate) {
-          const ed = new Date(filters.endDate);
-          if (!isNaN(ed.getTime())) where.releasedAt.lte = endOfDay(ed);
-        }
       }
 
       const campaignIds = this.normalizeArray(filters.campaignId);
@@ -883,12 +869,14 @@ export class DashboardService {
       if (auditorIds.length > 0) where.auditorId = { in: auditorIds };
 
       const agentIds = this.normalizeArray(filters.agentId);
-      if (agentIds.length > 0) where.agent.id = { in: agentIds };
-
       const supervisors = this.normalizeArray(filters.supervisor);
-      if (supervisors.length > 0) where.agent.supervisor = { in: supervisors };
-
-      if (Object.keys(where.agent).length === 0) delete where.agent;
+      
+      if (agentIds.length > 0 || supervisors.length > 0) {
+        where.agent = {
+          ...(agentIds.length > 0 ? { id: { in: agentIds } } : {}),
+          ...(supervisors.length > 0 ? { supervisor: { in: supervisors } } : {}),
+        };
+      }
 
       const audits = await this.prisma.audit.findMany({
         where,
@@ -898,6 +886,7 @@ export class DashboardService {
           coachingLog: { include: { supervisor: true } },
         },
       });
+
 
       const results = audits.map((audit) => {
         try {
@@ -926,6 +915,7 @@ export class DashboardService {
           }
 
           const isBreached = status === 'Late' || status === 'Overdue';
+          const requiresCoaching = (audit.score || 0) < 100;
 
           return {
             id: audit.id,
@@ -939,6 +929,8 @@ export class DashboardService {
             coachingDate,
             deadline,
             ticketReference: audit.ticketReference,
+            score: audit.score,
+            requiresCoaching,
           };
         } catch (e) {
           return null;
@@ -950,18 +942,24 @@ export class DashboardService {
       const supervisorMap = new Map();
 
       results.forEach(r => {
+        if (!r.requiresCoaching) return; // Skip 100% audits for these metrics
+
         // Agent Table Stats
         if (!agentMap.has(r.agentName)) {
           agentMap.set(r.agentName, {
             name: r.agentName, total: 0, completed: 0, pending: 0, overdue: 0,
-            early: 0, onTime: 0, late: 0, breached: 0
+            early: 0, onTime: 0, late: 0, breached: 0, metricsTotal: 0
           });
         }
         const a = agentMap.get(r.agentName);
         a.total++;
+        a.metricsTotal++;
+
         if (r.acknowledged) a.completed++;
         else if (r.isReleased) a.pending++;
         else if (r.status === 'Overdue') a.overdue++;
+
+        if (r.status !== 'Not Started') a.metricsTotal++;
 
         if (r.status === 'Early') a.early++;
         else if (r.status === 'On-Time') a.onTime++;
@@ -974,14 +972,17 @@ export class DashboardService {
         if (!supervisorMap.has(sName)) {
           supervisorMap.set(sName, {
             name: sName, total: 0, completed: 0, pending: 0, overdue: 0,
-            early: 0, onTime: 0, late: 0, breached: 0
+            early: 0, onTime: 0, late: 0, breached: 0, metricsTotal: 0
           });
         }
         const s = supervisorMap.get(sName);
         s.total++;
+
         if (r.acknowledged) s.completed++;
         else if (r.isReleased) s.pending++;
         else if (r.status === 'Overdue') s.overdue++;
+
+        if (r.status !== 'Not Started') s.metricsTotal++;
 
         if (r.status === 'Early') s.early++;
         else if (r.status === 'On-Time') s.onTime++;
@@ -990,41 +991,54 @@ export class DashboardService {
         if (r.isBreached) s.breached++;
       });
 
-      const agentCoverage = Array.from(agentMap.values()).map(a => ({
-        ...a,
-        complianceRate: a.total > 0 ? ((a.early + a.onTime) / a.total) * 100 : 0
-      })).sort((a, b) => b.overdue - a.overdue);
+      const agentCoverage = Array.from(agentMap.values()).map(a => {
+        const complianceDenom = a.completed + a.pending + a.overdue;
+        return {
+          ...a,
+          complianceRate: complianceDenom > 0 ? (a.completed / complianceDenom) * 100 : 100
+        };
+      }).sort((a, b) => b.overdue - a.overdue);
 
-      const supervisorAccountability = Array.from(supervisorMap.values()).map(s => ({
-        ...s,
-        compliance: s.total > 0 ? ((s.early + s.onTime) / s.total) * 100 : 0
-      })).sort((a, b) => a.compliance - b.compliance);
+      const supervisorAccountability = Array.from(supervisorMap.values()).map(s => {
+        const complianceDenom = s.completed + s.pending + s.overdue;
+        return {
+          ...s,
+          compliance: complianceDenom > 0 ? (s.completed / complianceDenom) * 100 : 100
+        };
+      }).sort((a, b) => a.compliance - b.compliance);
 
-      const totalAudits = results.length;
-      const earlyCount = results.filter(r => r.status === 'Early').length;
-      const onTimeCount = results.filter(r => r.status === 'On-Time').length;
-      const lateCount = results.filter(r => r.status === 'Late').length;
+      const mandatoryResults = results.filter(r => r.requiresCoaching && r.sentDate >= requestedStart && r.sentDate <= requestedEnd);
+      const totalMandatory = mandatoryResults.length;
+      
+      const mCompleted = mandatoryResults.filter(r => r.acknowledged).length;
+      const mPending = mandatoryResults.filter(r => r.isReleased && !r.acknowledged).length;
+      const mOverdue = mandatoryResults.filter(r => r.status === 'Overdue').length;
 
-      const totalCompliant = earlyCount + onTimeCount;
-      const totalReleased = earlyCount + onTimeCount + lateCount;
+      const earlyMandatory = mandatoryResults.filter(r => r.status === 'Early').length;
+      const onTimeMandatory = mandatoryResults.filter(r => r.status === 'On-Time').length;
+      const lateMandatory = mandatoryResults.filter(r => r.status === 'Late').length;
 
-      const complianceRate = totalAudits > 0 ? (totalCompliant / totalAudits) * 100 : 0;
-      const onTimeRate = totalReleased > 0 ? (totalCompliant / totalReleased) * 100 : 0;
+      const compliantMandatory = earlyMandatory + onTimeMandatory;
+      const releasedMandatory = earlyMandatory + onTimeMandatory + lateMandatory;
+
+      const complianceDenom = mCompleted + mPending + mOverdue;
+      const complianceRate = complianceDenom > 0 ? (mCompleted / complianceDenom) * 100 : 100;
+      const onTimeRate = releasedMandatory > 0 ? (compliantMandatory / releasedMandatory) * 100 : 0;
 
       const summary = {
-        totalAudits,
-        completed: results.filter(r => r.acknowledged).length,
-        pending: results.filter(r => r.isReleased && !r.acknowledged).length,
+        totalAudits: totalMandatory,
+        completed: results.filter(r => r.requiresCoaching && r.acknowledged).length,
+        pending: results.filter(r => r.requiresCoaching && r.isReleased && !r.acknowledged).length,
         complianceRate,
         onTimeRate,
-        early: earlyCount,
-        late: lateCount,
-        overdue: results.filter(r => r.status === 'Overdue').length,
-        notStarted: results.filter(r => r.status === 'Not Started').length,
+        early: results.filter(r => r.requiresCoaching && r.status === 'Early').length,
+        late: results.filter(r => r.requiresCoaching && r.status === 'Late').length,
+        overdue: results.filter(r => r.requiresCoaching && r.status === 'Overdue').length,
+        notStarted: results.filter(r => r.requiresCoaching && r.status === 'Not Started').length,
       };
 
       const overdueTracker = results
-        .filter(r => r.status === 'Overdue')
+        .filter(r => r.requiresCoaching && r.status === 'Overdue')
         .map(r => ({
           id: r.id,
           agentName: r.agentName,
@@ -1037,7 +1051,7 @@ export class DashboardService {
         .sort((a, b) => b.hoursOverdue - a.hoursOverdue);
 
       const pendingTracker = results
-        .filter(r => r.isReleased && !r.acknowledged)
+        .filter(r => r.requiresCoaching && r.isReleased && !r.acknowledged)
         .sort((a, b) => b.sentDate.getTime() - a.sentDate.getTime());
 
       // Activity Trend with Granularity
@@ -1059,7 +1073,7 @@ export class DashboardService {
         interval = eachDayOfInterval({ start: trendStart, end: trendEnd });
       }
 
-      const activityTrend = interval.map((date) => {
+      const mandatoryActivityTrend = interval.map((date) => {
         let start, end, label;
 
         if (granularity === 'month') {
@@ -1076,29 +1090,66 @@ export class DashboardService {
           label = format(date, 'MMM dd');
         }
 
+        // Mandatory trend: count coaching sessions PERFORMED for sub-100% audits (by date coaching was released)
         const count = results.filter((r) => {
-          if (!r.coachingDate) return false;
-          const d = new Date(r.coachingDate);
+          if (!r.requiresCoaching || !r.coachingDate) return false;
+          const d = r.coachingDate instanceof Date ? r.coachingDate : new Date(r.coachingDate);
+          if (granularity === 'day') return isSameDay(d, start);
           return d >= start && d <= end;
         }).length;
 
         return { date: label, count };
       });
 
+
+      const optionalActivityTrend = interval.map((date) => {
+        let start, end, label;
+
+        if (granularity === 'month') {
+          start = startOfMonth(date);
+          end = endOfMonth(date);
+          label = format(date, 'MMM yyyy');
+        } else if (granularity === 'week') {
+          start = startOfWeek(date, { weekStartsOn: 0 });
+          end = endOfWeek(date, { weekStartsOn: 0 });
+          label = `Week of ${format(start, 'MMM d')}`;
+        } else {
+          start = startOfDay(date);
+          end = endOfDay(date);
+          label = format(date, 'MMM dd');
+        }
+
+        // Optional trend: count coaching sessions PERFORMED for 100% score audits (by date coaching was released)
+        const count = results.filter((r) => {
+          if (r.requiresCoaching || !r.coachingDate) return false; // only 100% audits that were coached
+          const d = r.coachingDate instanceof Date ? r.coachingDate : new Date(r.coachingDate);
+          if (granularity === 'day') return isSameDay(d, start);
+          return d >= start && d <= end;
+        }).length;
+
+        return { date: label, count };
+      });
+
+
       return {
         summary,
         timelinessBreakdown: [
-          { name: 'Early', value: summary.early },
+          { name: 'Early', value: results.filter(r => r.status === 'Early').length },
           { name: 'On-Time', value: results.filter(r => r.status === 'On-Time').length },
-          { name: 'Late', value: summary.late },
-          { name: 'Overdue', value: summary.overdue },
-          { name: 'Not Started', value: summary.notStarted },
+          { name: 'Late', value: results.filter(r => r.status === 'Late').length },
+          { name: 'Overdue', value: results.filter(r => r.status === 'Overdue' && r.requiresCoaching).length },
+          { name: 'Not Started', value: results.filter(r => r.status === 'Not Started' && r.requiresCoaching).length },
         ],
         supervisorAccountability,
         agentCoverage,
         overdueTracker,
         pendingTracker,
-        activityTrend,
+        mandatoryActivityTrend,
+        optionalActivityTrend,
+        activityTrend: mandatoryActivityTrend.map((m, i) => ({
+          date: m.date,
+          count: m.count + (optionalActivityTrend[i]?.count || 0)
+        })),
       };
     } catch (error) {
       console.error('[COACHING_STATS] ERROR:', error);
@@ -1134,6 +1185,8 @@ export class DashboardService {
       agentCoverage: [],
       overdueTracker: [],
       pendingTracker: [],
+      mandatoryActivityTrend: [],
+      optionalActivityTrend: [],
       activityTrend: [],
     };
   }

@@ -1003,6 +1003,13 @@ export class DashboardService {
         if (r.isBreached) s.breached++;
       });
 
+      const supervisorAccountability = Array.from(supervisorMap.values()).map(s => {
+        return {
+          ...s,
+          compliance: s.total > 0 ? ((s.completed + s.pending) / s.total) * 100 : 100
+        };
+      }).sort((a, b) => a.compliance - b.compliance);
+
       const agentCoverage = Array.from(agentMap.values()).map(a => {
         const denom = a.completed + a.pending + a.overdue;
         return {
@@ -1010,14 +1017,6 @@ export class DashboardService {
           complianceRate: denom > 0 ? (a.completed / denom) * 100 : 100
         };
       }).sort((a, b) => b.overdue - a.overdue);
-
-      const supervisorAccountability = Array.from(supervisorMap.values()).map(s => {
-        const denom = s.completed + s.pending + s.overdue;
-        return {
-          ...s,
-          compliance: denom > 0 ? (s.completed / denom) * 100 : 100
-        };
-      }).sort((a, b) => a.compliance - b.compliance);
 
       const mandatoryResults = results.filter(r => r.requiresCoaching && r.sentDate >= requestedStart && r.sentDate <= requestedEnd);
       const totalMandatory = mandatoryResults.length;
@@ -1033,7 +1032,11 @@ export class DashboardService {
       const compliantMandatory = earlyMandatory + onTimeMandatory;
       const releasedMandatory = earlyMandatory + onTimeMandatory + lateMandatory;
 
-      const complianceRate = totalMandatory > 0 ? ((mCompleted + mPending) / totalMandatory) * 100 : 100;
+      const supervisorAvg = supervisorAccountability.length > 0
+        ? supervisorAccountability.reduce((sum, s) => sum + s.compliance, 0) / supervisorAccountability.length
+        : 100;
+
+      const complianceRate = supervisorAvg;
       const onTimeRate = releasedMandatory > 0 ? (compliantMandatory / releasedMandatory) * 100 : 0;
 
       const summary = {

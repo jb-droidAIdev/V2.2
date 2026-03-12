@@ -26,6 +26,7 @@ async function main() {
         { code: 'AUDIT_ACKNOWLEDGE', module: 'Audit', description: 'Grants ability to acknowledge completed audits.' },
         { code: 'AUDIT_DELETE', module: 'Audit', description: 'Grants ability to permanently delete audit records.' },
         { code: 'AUDIT_COACH', module: 'Audit', description: 'Grants ability to conduct and release coaching logs.' },
+        { code: 'COACHING_LOG_READ', module: 'Audit', description: 'Grants view-only access to coaching logs without editing capabilities.' },
         { code: 'DISPUTE_CREATE', module: 'Dispute', description: 'Grants ability to file a dispute against an audit.' },
         { code: 'DISPUTE_RESOLVE', module: 'Dispute', description: 'Grants ability to provide QA verdict on disputes.' },
         { code: 'DISPUTE_REAPPEAL', module: 'Dispute', description: 'Grants ability to file a re-appeal on QA verdicts.' },

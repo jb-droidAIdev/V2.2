@@ -62,6 +62,7 @@ export enum Permission {
   AUDIT_ACKNOWLEDGE = 'AUDIT_ACKNOWLEDGE',
   AUDIT_DELETE = 'AUDIT_DELETE',
   AUDIT_COACH = 'AUDIT_COACH',
+  COACHING_LOG_READ = 'COACHING_LOG_READ',
 
   // ── Dispute ────────────────────────────────────────────────────────
   DISPUTE_CREATE = 'DISPUTE_CREATE',

@@ -1011,7 +1011,7 @@ export class DashboardService {
       }).sort((a, b) => a.compliance - b.compliance);
 
       const agentCoverage = Array.from(agentMap.values()).map(a => {
-        const denom = a.completed + a.pending + a.overdue;
+        const denom = a.pending + a.overdue;
         return {
           ...a,
           complianceRate: denom > 0 ? (a.completed / denom) * 100 : 100

@@ -697,179 +697,142 @@ export class DashboardService {
         `[DASHBOARD] getFilterOptions | User ID: ${user.id} | role=${role} | restricted=${isManagerRestricted}`,
       );
 
-      // Extract active filters
-      const normalizeArray = (val: any) => {
-        if (!val) return [];
-        if (Array.isArray(val)) return val.map(v => String(v).trim()).filter(Boolean);
-        if (typeof val === 'string' && val.includes(',')) {
-          return val.split(',').map(v => v.trim()).filter(Boolean);
-        }
-        return [String(val).trim()].filter(Boolean);
-      };
+      const activeCampaigns = this.normalizeArray(filters.campaignId);
+      const activeSupervisors = this.normalizeArray(filters.supervisor);
+      const activeSdms = this.normalizeArray(filters.sdm);
 
-      const activeCampaigns = normalizeArray(filters.campaignId);
-      const activeSupervisors = normalizeArray(filters.supervisor);
-      const activeSdms = normalizeArray(filters.sdm);
-      const activeAuditors = normalizeArray(filters.auditorId);
+      // Determine allowed campaign IDs based on role
+      let allowedCampaignIds: string[] | null = null; // null = no restriction
 
-      const visibilityFilter: any = {};
-      let assignedIds: string[] = [];
-      if (!isStaff) {
-        visibilityFilter.id = user.id;
-      } else if (isManagerRestricted) {
+      if (isManagerRestricted) {
         const assignments = await this.prisma.campaignQA.findMany({
           where: { userId: user.id, isActive: true },
           select: { campaignId: true },
         });
-        assignedIds = assignments.map((a) => a.campaignId);
-
+        const assignedIds = assignments.map((a) => a.campaignId);
         if (assignedIds.length === 0) {
-          return {
-            campaigns: [],
-            supervisors: [],
-            sdms: [],
-            agents: [],
-            qas: [],
-          };
+          return { campaigns: [], supervisors: [], sdms: [], agents: [], qas: [] };
         }
-      }
-
-      // Cascading logic for Agents visibility
-      if (isManagerRestricted) {
-        // If they have selected a specific campaign, further restrict the visibility
-        const campaignIdsToUse = activeCampaigns.length > 0
-            ? assignedIds.filter(id => activeCampaigns.includes(id) || activeCampaigns.includes(`TEAM:${id}`)) // intersection
-            : assignedIds;
-        
-        // If they selected a campaign they don't have access to (or it's empty)
-        if (activeCampaigns.length > 0 && campaignIdsToUse.length === 0) {
-          visibilityFilter.auditsReceived = { some: { campaignId: { in: [] } } }; // Force empty cleanly
-        } else {
-          visibilityFilter.auditsReceived = { some: { campaignId: { in: campaignIdsToUse } } };
-        }
-      } else {
-        const campaignConditions = [];
         if (activeCampaigns.length > 0) {
-           const teamNames = activeCampaigns.filter(id => id.startsWith('TEAM:')).map(id => id.replace('TEAM:', ''));
-           const realIds = activeCampaigns.filter(id => !id.startsWith('TEAM:'));
-           if (realIds.length > 0) campaignConditions.push({ auditsReceived: { some: { campaignId: { in: realIds } } } });
-           if (teamNames.length > 0) campaignConditions.push({ employeeTeam: { in: teamNames } });
-        }
-        
-        if (campaignConditions.length > 1) {
-          visibilityFilter.OR = campaignConditions;
-        } else if (campaignConditions.length === 1) {
-          Object.assign(visibilityFilter, campaignConditions[0]);
+          const realIds = activeCampaigns.filter(id => !id.startsWith('TEAM:'));
+          allowedCampaignIds = realIds.filter(id => assignedIds.includes(id));
+          if (allowedCampaignIds.length === 0) {
+            return { campaigns: [], supervisors: [], sdms: [], agents: [], qas: [] };
+          }
         } else {
-          visibilityFilter.auditsReceived = { some: {} };
+          allowedCampaignIds = assignedIds;
         }
       }
 
-      // Apply cascading logic from SDM -> Supervisor -> Agent
-      if (activeSupervisors.length > 0) visibilityFilter.supervisor = { in: activeSupervisors };
-      if (activeSdms.length > 0) visibilityFilter.sdm = { in: activeSdms };
+      // Build agent-where using AND to avoid invalid Prisma queries
+      const buildAgentWhere = (): any => {
+        const conditions: any[] = [];
 
-      // Campaigns Filter (Usually less restricted by cascading to prevent disappearing options)
+        if (allowedCampaignIds !== null) {
+          // Manager-restricted: scope by assigned campaign audits
+          conditions.push({ auditsReceived: { some: { campaignId: { in: allowedCampaignIds } } } });
+        } else if (!isStaff) {
+          // Agents only see themselves
+          conditions.push({ id: user.id });
+        } else if (activeCampaigns.length > 0) {
+          // Staff with explicit campaign filter: OR between real IDs and team names
+          const teamNames = activeCampaigns.filter(id => id.startsWith('TEAM:')).map(id => id.replace('TEAM:', ''));
+          const realIds = activeCampaigns.filter(id => !id.startsWith('TEAM:'));
+          const campaignOr: any[] = [];
+          if (realIds.length > 0) campaignOr.push({ auditsReceived: { some: { campaignId: { in: realIds } } } });
+          if (teamNames.length > 0) campaignOr.push({ employeeTeam: { in: teamNames } });
+          if (campaignOr.length === 1) conditions.push(campaignOr[0]);
+          else if (campaignOr.length > 1) conditions.push({ OR: campaignOr });
+        } else {
+          // No restrictions — only agents with at least one audit
+          conditions.push({ auditsReceived: { some: {} } });
+        }
+
+        if (activeSupervisors.length > 0) conditions.push({ supervisor: { in: activeSupervisors } });
+        if (activeSdms.length > 0) conditions.push({ sdm: { in: activeSdms } });
+
+        if (conditions.length === 0) return {};
+        if (conditions.length === 1) return conditions[0];
+        return { AND: conditions };
+      };
+
+      const agentBaseWhere = buildAgentWhere();
+
+      // Campaign list for filter dropdown (not cascaded — show full allowed set)
       const campaignFilter: any = { type: 'USER', audits: { some: {} } };
       if (isManagerRestricted) {
-        campaignFilter.qaAssignments = {
-          some: { userId: user.id, isActive: true },
-        };
+        campaignFilter.qaAssignments = { some: { userId: user.id, isActive: true } };
       } else if (!isStaff) {
-        campaignFilter.OR = [
-          { qaAssignments: { some: { userId: user.id } } },
-          { name: user.employeeTeam || 'NON_EXISTENT' }, // Protect from undefined throwing 500
-        ];
+        campaignFilter.id = 'NON_EXISTENT';
       }
 
-      const campaigns = await this.prisma.campaign.findMany({
-        where: campaignFilter,
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' },
-      });
+      // Employee teams (for implicit campaigns)
+      const teamWhere: any =
+        allowedCampaignIds !== null
+          ? { auditsReceived: { some: { campaignId: { in: allowedCampaignIds } } } }
+          : !isStaff
+          ? { id: user.id }
+          : { auditsReceived: { some: {} } };
 
-      // Supervisors
-      const supervisorsRaw = await this.prisma.user.findMany({
-        where: {
-          supervisor: { not: null },
-          ...(!isStaff || isManagerRestricted || activeCampaigns.length > 0 || activeSdms.length > 0 ? visibilityFilter : {}),
-        },
-        select: { supervisor: true },
-        distinct: ['supervisor'],
-      });
-
-      // SDMs
-      const sdmsRaw = await this.prisma.user.findMany({
-        where: {
-          sdm: { not: null },
-          ...(!isStaff || isManagerRestricted || activeCampaigns.length > 0 ? visibilityFilter : {}),
-        },
-        select: { sdm: true },
-        distinct: ['sdm'],
-      });
-
-      // Teams (Employee Teams)
-      const userTeams = await this.prisma.user.findMany({
-        where: {
-          auditsReceived: visibilityFilter.auditsReceived || { some: {} },
-          ...(!isStaff ? { employeeTeam: user.employeeTeam || 'NON_EXISTENT' } : {}), // Protect from undefined
-        },
-        select: { employeeTeam: true },
-        distinct: ['employeeTeam'],
-      });
-
-      // Agents
-      const auditedAgents = await this.prisma.user.findMany({
-        where: {
-          role: 'AGENT' as any,
-          ...(!isStaff || isManagerRestricted || activeCampaigns.length > 0 || activeSupervisors.length > 0 || activeSdms.length > 0 ? visibilityFilter : { auditsReceived: { some: {} } }),
-        },
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' },
-      });
-
-      // QA Auditors filtered by selected Campaign if applicable
+      // QA Auditors: cascade on campaign if selected
       const qaFilter: any = { role: { in: [Role.QA, Role.QA_TL] as any } };
-      if (activeCampaigns.length > 0) {
-         const realIds = activeCampaigns.filter(id => !id.startsWith('TEAM:'));
-         if (realIds.length > 0) {
-            qaFilter.auditsPerformed = { some: { campaignId: { in: realIds } } };
-         }
+      const realSelectedIds = activeCampaigns.filter(id => !id.startsWith('TEAM:'));
+      if (allowedCampaignIds !== null) {
+        qaFilter.auditsPerformed = { some: { campaignId: { in: allowedCampaignIds } } };
+      } else if (realSelectedIds.length > 0) {
+        qaFilter.auditsPerformed = { some: { campaignId: { in: realSelectedIds } } };
       }
 
-      const qas = await this.prisma.user.findMany({
-        where: qaFilter,
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' },
-      });
+      const [campaigns, supervisorsRaw, sdmsRaw, auditedAgents, userTeams, qas] = await Promise.all([
+        this.prisma.campaign.findMany({
+          where: campaignFilter,
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        }),
+        this.prisma.user.findMany({
+          where: { supervisor: { not: null }, ...agentBaseWhere },
+          select: { supervisor: true },
+          distinct: ['supervisor'],
+        }),
+        this.prisma.user.findMany({
+          where: { sdm: { not: null }, ...agentBaseWhere },
+          select: { sdm: true },
+          distinct: ['sdm'],
+        }),
+        this.prisma.user.findMany({
+          where: { role: 'AGENT' as any, ...agentBaseWhere },
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        }),
+        this.prisma.user.findMany({
+          where: teamWhere,
+          select: { employeeTeam: true },
+          distinct: ['employeeTeam'],
+        }),
+        this.prisma.user.findMany({
+          where: qaFilter,
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        }),
+      ]);
 
-      const campaignNames = new Set(
-        campaigns.map((c) => c.name.toLowerCase().trim()),
-      );
+      const campaignNames = new Set(campaigns.map((c) => c.name.toLowerCase().trim()));
       const implicitCampaigns = userTeams
         .map((t) => t.employeeTeam?.trim())
-        .filter(
-          (t) => t && t !== 'Unassigned' && !campaignNames.has(t.toLowerCase()),
-        )
-        .map((t) => ({ id: `TEAM:${t}`, name: t }));
+        .filter((t) => t && t !== 'Unassigned' && !campaignNames.has(t.toLowerCase()))
+        .map((t) => ({ id: `TEAM:${t}`, name: t! }));
 
       return {
         campaigns: [...campaigns, ...implicitCampaigns].sort((a, b) =>
           (a.name || '').localeCompare(b.name || ''),
         ),
-        supervisors: supervisorsRaw
-          .map((s) => s.supervisor)
-          .filter(Boolean)
-          .sort(),
-        sdms: sdmsRaw
-          .map((s) => s.sdm)
-          .filter(Boolean)
-          .sort(),
+        supervisors: supervisorsRaw.map((s) => s.supervisor).filter(Boolean).sort() as string[],
+        sdms: sdmsRaw.map((s) => s.sdm).filter(Boolean).sort() as string[],
         agents: auditedAgents,
         qas,
       };
     } catch (error) {
-      console.error('[DASHBOARD] ERROR:', error);
+      console.error('[DASHBOARD] getFilterOptions ERROR:', error);
       throw error;
     }
   }

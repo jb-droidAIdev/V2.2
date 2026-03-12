@@ -52,6 +52,7 @@ export class DashboardService {
         'QA',
       ];
       const isStaff = role !== 'AGENT';
+      const now = new Date();
 
       console.log(
         `[DASHBOARD] getStats Entry | User: ${user.id} | Role: ${role} | Filters: ${JSON.stringify(filters)}`,
@@ -76,155 +77,97 @@ export class DashboardService {
         }
       }
 
-      const where: any = {
-        status: {
-          in: [
-            AuditStatus.SUBMITTED,
-            AuditStatus.RELEASED,
-            AuditStatus.DISPUTED,
-            AuditStatus.REAPPEALED,
-            (AuditStatus as any).ACKNOWLEDGED,
-          ],
-        },
+      const buildStatsWhere = (): any => {
+        const conditions: any[] = [
+          {
+            status: {
+              in: [
+                AuditStatus.SUBMITTED,
+                AuditStatus.RELEASED,
+                AuditStatus.DISPUTED,
+                AuditStatus.REAPPEALED,
+                (AuditStatus as any).ACKNOWLEDGED,
+              ],
+            },
+          },
+        ];
+
+        // 8. Role-based Security for Agent (Agents only see RELEASED data onwards)
+        if (role === 'AGENT') {
+          conditions[0].status.in = conditions[0].status.in.filter((s: any) => s !== AuditStatus.SUBMITTED);
+        }
+
+        // 1. Date Range
+        if (filters.startDate || filters.endDate) {
+          const dateCond: any = {};
+          if (filters.startDate) {
+            const sd = new Date(filters.startDate);
+            if (!isNaN(sd.getTime())) dateCond.gte = sd;
+          }
+          if (filters.endDate) {
+            const ed = new Date(filters.endDate);
+            if (!isNaN(ed.getTime())) dateCond.lte = endOfDay(ed);
+          }
+          if (Object.keys(dateCond).length > 0) conditions.push({ submittedAt: dateCond });
+        }
+
+        // 2. Campaigns & Teams
+        const campaignIds = this.normalizeArray(filters.campaignId);
+        if (campaignIds.length > 0) {
+          const teamNames = campaignIds.filter((id: string) => id.startsWith('TEAM:')).map((id: string) => id.replace('TEAM:', ''));
+          const realIds = campaignIds.filter((id: string) => !id.startsWith('TEAM:'));
+
+          const campaignOr = [];
+          if (realIds.length > 0) campaignOr.push({ campaignId: { in: realIds } });
+          if (teamNames.length > 0) campaignOr.push({ agent: { employeeTeam: { in: teamNames } } });
+
+          if (campaignOr.length === 1) conditions.push(campaignOr[0]);
+          else if (campaignOr.length > 1) conditions.push({ OR: campaignOr });
+        }
+
+        // 3. Auditor(s)
+        const auditorIds = this.normalizeArray(filters.auditorId);
+        if (auditorIds.length > 0) conditions.push({ auditorId: { in: auditorIds } });
+
+        // 4. Agent Selection & Bios
+        const agentIds = this.normalizeArray(filters.agentId);
+        const supervisors = this.normalizeArray(filters.supervisor);
+        const sdms = this.normalizeArray(filters.sdm);
+        const agentName = filters.agentName;
+
+        if (agentIds.length > 0 || supervisors.length > 0 || sdms.length > 0 || agentName) {
+          conditions.push({
+            agent: {
+              ...(agentIds.length > 0 ? { id: { in: agentIds } } : {}),
+              ...(supervisors.length > 0 ? { supervisor: { in: supervisors } } : {}),
+              ...(sdms.length > 0 ? { sdm: { in: sdms } } : {}),
+              ...(agentName ? { name: { contains: agentName, mode: 'insensitive' } } : {}),
+            }
+          });
+        }
+
+        // 5. Ticket ID Search
+        if (filters.ticketId) {
+          conditions.push({
+            OR: [
+              { sampledTicket: { ticket: { externalTicketId: { contains: filters.ticketId, mode: 'insensitive' } } } },
+              { ticketReference: { contains: filters.ticketId, mode: 'insensitive' } },
+              { agent: { name: { contains: filters.ticketId, mode: 'insensitive' } } },
+            ]
+          });
+        }
+
+        // 6. Security Boundaries
+        if (role === 'AGENT') {
+          conditions.push({ agentId: user.id });
+        } else if (restrictedRoles.includes(role)) {
+          conditions.push({ campaignId: { in: assignedCampaignIds } });
+        }
+
+        return conditions.length === 1 ? conditions[0] : { AND: conditions };
       };
 
-      // 8. Role-based Security for Agent (Agents only see RELEASED data onwards)
-      if (role === 'AGENT') {
-        where.status.in = where.status.in.filter((s) => s !== AuditStatus.SUBMITTED);
-      }
-
-      // Initialize agent filter object early to support merging
-      where.agent = {};
-
-      // Helper to normalize input (handle both ?key=1,2 and multiple ?key=1&key=2)
-
-      // 1. Date Range
-      const now = new Date();
-      if (filters.startDate || filters.endDate) {
-        where.submittedAt = {};
-        if (filters.startDate) {
-          const sd = new Date(filters.startDate);
-          if (!isNaN(sd.getTime())) where.submittedAt.gte = sd;
-        }
-        if (filters.endDate) {
-          const ed = new Date(filters.endDate);
-          if (!isNaN(ed.getTime())) where.submittedAt.lte = endOfDay(ed);
-        }
-        if (Object.keys(where.submittedAt).length === 0) delete where.submittedAt;
-      }
-
-      // 2. Campaigns & Teams
-      const campaignIds = this.normalizeArray(filters.campaignId);
-      if (campaignIds.length > 0) {
-        const teamNames = campaignIds
-          .filter((id: string) => id.startsWith('TEAM:'))
-          .map((id: string) => id.replace('TEAM:', ''));
-        const realIds = campaignIds.filter(
-          (id: string) => !id.startsWith('TEAM:'),
-        );
-
-        const campaignConditions = [];
-        if (realIds.length > 0)
-          campaignConditions.push({ campaignId: { in: realIds } });
-        if (teamNames.length > 0)
-          campaignConditions.push({
-            agent: { employeeTeam: { in: teamNames } },
-          });
-
-        if (campaignConditions.length > 1) {
-          where.OR = campaignConditions;
-        } else if (campaignConditions.length === 1) {
-          const cond = campaignConditions[0];
-          if (cond.campaignId) where.campaignId = cond.campaignId;
-          if (cond.agent) where.agent = { ...where.agent, ...cond.agent };
-        }
-      }
-
-      // 3. Auditor(s)
-      const auditorIds = this.normalizeArray(filters.auditorId);
-      if (auditorIds.length > 0) {
-        where.auditorId = { in: auditorIds };
-      }
-
-      // 4. Agent Selection (Multi-select)
-      const agentIds = this.normalizeArray(filters.agentId);
-      if (agentIds.length > 0) {
-        where.agent.id = { in: agentIds };
-      }
-
-      // 5. Agent Name (Search)
-      if (filters.agentName) {
-        where.agent.name = { contains: filters.agentName, mode: 'insensitive' };
-      }
-
-      // 6. Supervisor/SDM Filters
-      const supervisors = this.normalizeArray(filters.supervisor);
-      if (supervisors.length > 0) where.agent.supervisor = { in: supervisors };
-
-      const sdms = this.normalizeArray(filters.sdm);
-      if (sdms.length > 0) where.agent.sdm = { in: sdms };
-
-      // 7. Ticket ID Search (External or Reference)
-      if (filters.ticketId) {
-        const ticketCondition = {
-          OR: [
-            {
-              sampledTicket: {
-                ticket: {
-                  externalTicketId: {
-                    contains: filters.ticketId,
-                    mode: 'insensitive',
-                  },
-                },
-              },
-            },
-            {
-              ticketReference: {
-                contains: filters.ticketId,
-                mode: 'insensitive',
-              },
-            },
-            {
-              agent: {
-                name: { contains: filters.ticketId, mode: 'insensitive' },
-              },
-            },
-          ],
-        };
-
-        // If we already have an OR (from campaigns), we must wrap both in an AND to intersect
-        if (where.OR) {
-          const existingOR = where.OR;
-          delete where.OR;
-          where.AND = [{ OR: existingOR }, ticketCondition];
-        } else {
-          where.OR = ticketCondition.OR;
-        }
-      }
-
-      // 8. Role-based Security & Governance
-      if (role === 'AGENT') {
-        where.agentId = user.id; // Override if it's an agent viewing their own data
-      } else if (restrictedRoles.includes(role)) {
-        const assignedIds = assignedCampaignIds;
-        // Intersect with existing filters
-        if (where.campaignId && where.campaignId.in) {
-          const requested = where.campaignId.in;
-          const intersected = requested.filter((id: string) =>
-            assignedIds.includes(id),
-          );
-          if (intersected.length === 0) return this.getEmptyStats();
-          where.campaignId = { in: intersected };
-        } else {
-          where.campaignId = { in: assignedIds };
-        }
-      } else if (!isStaff) {
-        // Further restricted roles (if any) only see their own team
-        where.agent = { ...where.agent, employeeTeam: user.employeeTeam || 'NON_EXISTENT' };
-      }
-
-      // Clean up empty objects to help Prisma optimizer
-      if (Object.keys(where.agent).length === 0) delete where.agent;
+      const where = buildStatsWhere();
 
       // Execute queries
       const audits = await this.prisma.audit.findMany({
@@ -872,35 +815,47 @@ export class DashboardService {
         requestedStart = startOfDay(requestedEnd);
       }
 
-      const where: any = {
-        status: { in: [AuditStatus.RELEASED, AuditStatus.ACKNOWLEDGED] },
-        releasedAt: { gte: requestedStart, lte: requestedEnd },
+      const buildCoachingWhere = (): any => {
+        const conditions: any[] = [
+          { status: { in: [AuditStatus.RELEASED, AuditStatus.ACKNOWLEDGED] } },
+          { releasedAt: { gte: requestedStart, lte: requestedEnd } }
+        ];
+
+        // 1. Role-based Security
+        if (role === 'AGENT') {
+          conditions.push({ agentId: user.id });
+        } else if (restrictedRoles.includes(role)) {
+          conditions.push({ campaignId: { in: assignedCampaignIds } });
+        }
+
+        // 2. Campaign Selection
+        const campaignIds = this.normalizeArray(filters.campaignId);
+        if (campaignIds.length > 0) {
+          const realIds = campaignIds.filter((id: string) => !id.startsWith('TEAM:'));
+          if (realIds.length > 0) conditions.push({ campaignId: { in: realIds } });
+          // Note: Team filtering for coaching is currently implicit via agent matching or could be added here
+        }
+
+        // 3. Auditor Selection
+        const auditorIds = this.normalizeArray(filters.auditorId);
+        if (auditorIds.length > 0) conditions.push({ auditorId: { in: auditorIds } });
+
+        // 4. Agent/Supervisor Selection
+        const agentIds = this.normalizeArray(filters.agentId);
+        const supervisors = this.normalizeArray(filters.supervisor);
+        if (agentIds.length > 0 || supervisors.length > 0) {
+          conditions.push({
+            agent: {
+              ...(agentIds.length > 0 ? { id: { in: agentIds } } : {}),
+              ...(supervisors.length > 0 ? { supervisor: { in: supervisors } } : {}),
+            }
+          });
+        }
+
+        return conditions.length === 1 ? conditions[0] : { AND: conditions };
       };
 
-      if (role === 'AGENT') {
-        where.agentId = user.id;
-      } else if (restrictedRoles.includes(role)) {
-        where.campaignId = { in: assignedCampaignIds };
-      }
-
-      const campaignIds = this.normalizeArray(filters.campaignId);
-      if (campaignIds.length > 0) {
-        const realIds = campaignIds.filter((id: string) => !id.startsWith('TEAM:'));
-        if (realIds.length > 0) where.campaignId = { in: realIds };
-      }
-
-      const auditorIds = this.normalizeArray(filters.auditorId);
-      if (auditorIds.length > 0) where.auditorId = { in: auditorIds };
-
-      const agentIds = this.normalizeArray(filters.agentId);
-      const supervisors = this.normalizeArray(filters.supervisor);
- 
-      if (agentIds.length > 0 || supervisors.length > 0) {
-        where.agent = {
-          ...(agentIds.length > 0 ? { id: { in: agentIds } } : {}),
-          ...(supervisors.length > 0 ? { supervisor: { in: supervisors } } : {}),
-        };
-      }
+      const where = buildCoachingWhere();
 
 
 

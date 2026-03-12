@@ -220,7 +220,7 @@ export class DashboardService {
         }
       } else if (!isStaff) {
         // Further restricted roles (if any) only see their own team
-        where.agent = { ...where.agent, employeeTeam: user.employeeTeam };
+        where.agent = { ...where.agent, employeeTeam: user.employeeTeam || 'NON_EXISTENT' };
       }
 
       // Clean up empty objects to help Prisma optimizer

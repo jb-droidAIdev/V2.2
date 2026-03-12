@@ -334,6 +334,9 @@ export class CampaignsService {
         await tx.releaseRecord.deleteMany({
           where: { auditId: { in: auditIds } },
         });
+        await tx.coachingLog.deleteMany({
+          where: { auditId: { in: auditIds } },
+        });
 
         // Calibration entries tied to audits
         await tx.calibrationAnchor.deleteMany({

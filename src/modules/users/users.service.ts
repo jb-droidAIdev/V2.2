@@ -361,8 +361,20 @@ export class UsersService {
   }
 
   async remove(id: string) {
-    return this.prisma.user.delete({
-      where: { id },
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Cleanup metadata and assignments
+      await tx.campaignQA.deleteMany({ where: { userId: id } });
+      await tx.userPermission.deleteMany({ where: { userId: id } });
+      await tx.notification.deleteMany({ where: { userId: id } });
+      
+      // 2. Cleanup calibration participation
+      await tx.calibrationResult.deleteMany({ where: { userId: id } });
+      await tx.calibrationParticipant.deleteMany({ where: { userId: id } });
+
+      // 3. Final deletion
+      return tx.user.delete({
+        where: { id },
+      });
     });
   }
 

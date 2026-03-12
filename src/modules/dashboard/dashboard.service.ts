@@ -778,9 +778,9 @@ export class DashboardService {
       const qaFilter: any = { role: { in: [Role.QA, Role.QA_TL] as any } };
       const realSelectedIds = activeCampaigns.filter(id => !id.startsWith('TEAM:'));
       if (allowedCampaignIds !== null) {
-        qaFilter.auditsPerformed = { some: { campaignId: { in: allowedCampaignIds } } };
+        qaFilter.auditsConducted = { some: { campaignId: { in: allowedCampaignIds } } };
       } else if (realSelectedIds.length > 0) {
-        qaFilter.auditsPerformed = { some: { campaignId: { in: realSelectedIds } } };
+        qaFilter.auditsConducted = { some: { campaignId: { in: realSelectedIds } } };
       }
 
       const [campaigns, supervisorsRaw, sdmsRaw, auditedAgents, userTeams, qas] = await Promise.all([

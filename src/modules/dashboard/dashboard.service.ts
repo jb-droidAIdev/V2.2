@@ -230,6 +230,8 @@ export class DashboardService {
       // Clean up empty objects to help Prisma optimizer
       if (Object.keys(where.agent).length === 0) delete where.agent;
 
+      console.log(`[DASHBOARD] getStats Final Where:`, JSON.stringify(where, null, 2));
+
       // Execute queries
       const audits = await this.prisma.audit.findMany({
         where,
@@ -719,6 +721,7 @@ export class DashboardService {
             sdms: [],
             agents: [],
             qas: [],
+            managers: [],
           };
         }
 
@@ -908,6 +911,8 @@ export class DashboardService {
         };
       }
 
+      console.log(`[DASHBOARD] getCoachingStats Final Where:`, JSON.stringify(where, null, 2));
+
       const audits = await this.prisma.audit.findMany({
         where,
         include: {
@@ -962,6 +967,7 @@ export class DashboardService {
             deadline,
             ticketReference: audit.ticketReference,
             score: audit.score,
+            manager: audit.agent.manager || 'N/A',
             requiresCoaching,
           };
         } catch (e) {
@@ -1221,6 +1227,7 @@ export class DashboardService {
       mandatoryActivityTrend: [],
       optionalActivityTrend: [],
       activityTrend: [],
+      managers: [],
     };
   }
 
@@ -1238,6 +1245,7 @@ export class DashboardService {
       policyProgress: [],
       activeProgressions: [],
       failedAudits: [],
+      managers: [],
     };
   }
 }

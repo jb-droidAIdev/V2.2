@@ -14,8 +14,8 @@ export class DashboardController {
   }
 
   @Get('filters')
-  getFilters(@Request() req: any) {
-    return this.dashboardService.getFilterOptions(req.user);
+  getFilters(@Query() query: any, @Request() req: any) {
+    return this.dashboardService.getFilterOptions(req.user, query);
   }
 
   @Get('coaching')

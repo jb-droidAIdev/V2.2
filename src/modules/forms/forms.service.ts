@@ -7,7 +7,7 @@ export class FormsService {
   constructor(
     private prisma: PrismaService,
     private auditService: AuditService,
-  ) {}
+  ) { }
 
   async findAll(archived: boolean = false) {
     try {
@@ -411,10 +411,7 @@ export class FormsService {
     });
     if (!version) throw new Error('Version not found');
 
-    // 1. Discard all in-progress audits for this form before activating new version
-    await this.auditService.discardAllByFormVersion(version.formId);
-
-    // 2. Deactivate other versions
+    // 1. Deactivate other versions
     await this.prisma.monitoringFormVersion.updateMany({
       where: { formId: version.formId },
       data: { isActive: false },

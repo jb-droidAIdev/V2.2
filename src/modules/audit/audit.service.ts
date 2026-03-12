@@ -7,13 +7,16 @@ import {
 import { PrismaService } from '../../prisma.service';
 import { AuditStatus, Role } from '@prisma/client';
 import { MailService } from '../mail/mail.service';
+import { SlaEngineService } from '../sla-engine/sla-engine.service';
+import { subDays } from 'date-fns';
 
 @Injectable()
 export class AuditService {
   constructor(
     private prisma: PrismaService,
     private mailService: MailService,
-  ) {}
+    private slaEngine: SlaEngineService,
+  ) { }
 
   async getActiveAudit(auditorId: string) {
     const audit = await this.prisma.audit.findFirst({
@@ -179,6 +182,7 @@ export class AuditService {
           AuditStatus.RELEASED,
           AuditStatus.DISPUTED,
           AuditStatus.REAPPEALED,
+          (AuditStatus as any).ACKNOWLEDGED,
         ],
       },
     };
@@ -601,10 +605,20 @@ export class AuditService {
           select: { id: true, name: true, eid: true },
         },
         campaign: {
-          select: { id: true, name: true, projectCode: true },
+          select: {
+            id: true,
+            name: true,
+            projectCode: true,
+            ztpWindowDays: true,
+            ztpMilestones: true,
+            ztpAckSlaHours: true
+          },
         },
         sampledTicket: {
           include: { ticket: true },
+        },
+        coachingLog: {
+          select: { id: true, releasedAt: true, agentAckAt: true, supervisorId: true },
         },
       },
     });
@@ -652,42 +666,57 @@ export class AuditService {
     }
 
     // ENRICHMENT: Calculate ZTP Milestones for the preview
-    const enrichedScores = await Promise.all(
-      audit.scores.map(async (score) => {
-        if (!score.isFailed || !audit.submittedAt)
-          return { ...score, reachedMilestone: null };
+    // Optimized: Fetch all relevant failures for this agent/window ONCE instead of N times
+    const auditDate = new Date(audit.submittedAt || audit.releasedAt || (audit as any).startedAt);
+    const ztpWindowDays = audit.campaign?.ztpWindowDays ?? 30;
+    const windowStart = subDays(auditDate, ztpWindowDays);
+    const validStatuses = [AuditStatus.RELEASED, AuditStatus.DISPUTED, AuditStatus.REAPPEALED, AuditStatus.ACKNOWLEDGED];
 
-        const parameterName = (
-          score.criterionTitle ||
-          score.criterion?.title ||
-          'Unknown Parameter'
-        ).trim();
-        const auditDate = new Date(audit.submittedAt);
-        const windowStart = new Date(auditDate);
-        windowStart.setDate(windowStart.getDate() - 30);
+    const allFailuresInWindow = await this.prisma.auditScore.findMany({
+      where: {
+        isFailed: true,
+        audit: {
+          status: { in: validStatuses },
+          agentId: audit.agentId,
+          campaignId: audit.campaignId,
+          submittedAt: { gte: windowStart, lte: auditDate },
+        }
+      },
+      select: { categoryLabel: true, criterionTitle: true, criterion: { select: { categoryName: true, title: true } } }
+    });
 
-        // Count infractions for this agent/cat in the 30d window leading to THIS audit
-        const count = await this.prisma.auditScore.count({
-          where: {
-            isFailed: true,
-            criterionTitle: parameterName,
-            audit: {
-              agentId: audit.agentId,
-              submittedAt: {
-                gte: windowStart,
-                lte: auditDate,
-              },
-            },
-          },
-        });
+    const enrichedScores = audit.scores.map((score) => {
+      const anyDate = audit.submittedAt || audit.releasedAt || audit.startedAt;
+      if (!score.isFailed || !anyDate)
+        return { ...score, reachedMilestone: null };
 
-        // If this specific audit caused hitting a milestone
-        const milestones = [3, 6, 9, 12, 15];
-        const reachedMilestone = milestones.includes(count) ? count : null;
+      const parameterName = (score.criterionTitle || score.criterion?.title || 'Unknown Parameter').trim();
+      const categoryName = (score.categoryLabel || score.criterion?.categoryName || 'General').trim();
 
-        return { ...score, reachedMilestone };
-      }),
-    );
+      const categoryCount = allFailuresInWindow.filter(f => {
+        const fCat = (f.categoryLabel || f.criterion?.categoryName || 'General').trim();
+        return fCat === categoryName;
+      }).length;
+
+      const parameterCount = allFailuresInWindow.filter(f => {
+        const fParam = (f.criterionTitle || f.criterion?.title || 'Unknown Parameter').trim();
+        return fParam === parameterName;
+      }).length;
+
+      const milestones = (audit.campaign?.ztpMilestones as number[]) ?? [3, 6, 9, 12, 15];
+      const sortedMilestones = [...milestones].sort((a, b) => a - b);
+
+      const reachedMilestone = [...sortedMilestones].reverse().find((m) => parameterCount >= m) || null;
+      const nextMilestone = sortedMilestones.find((m) => m > parameterCount) || null;
+
+      return {
+        ...score,
+        reachedMilestone,
+        ztpCount: categoryCount,
+        ztpNextMilestone: nextMilestone,
+        parameterZtpCount: parameterCount
+      };
+    });
 
     return { ...audit, scores: enrichedScores };
   }
@@ -795,12 +824,19 @@ export class AuditService {
     return { status: 'saved', score: percent };
   }
 
-  async submit(id: string, auditorId: string) {
+  async submit(id: string, auditorId: string, data?: any) {
+    // 0. Optional: Sync final scores if provided in the submit request
+    if (data && (data.scores || data.fieldValues)) {
+      await this.autosave(id, auditorId, data);
+    }
+
     // 1. Fetch final state with ALL required relations for notification
     const audit = await this.prisma.audit.findUnique({
       where: { id },
       include: {
-        scores: true,
+        scores: {
+          include: { criterion: true },
+        },
         formVersion: {
           include: {
             criteria: true,
@@ -825,10 +861,7 @@ export class AuditService {
     }
 
     // 2. Data Integrity Validation WITH FRESHEST DATA
-    const dbScores = await this.prisma.auditScore.findMany({
-      where: { auditId: id },
-      include: { criterion: true },
-    });
+    const dbScores = audit.scores;
 
     // A. Completeness Check (Only count scores for parameters in this specific FormVersion)
     const validCriterionIds = new Set(
@@ -881,51 +914,70 @@ export class AuditService {
 
     // 3. Official Submission -> Auto Release protocol
     const now = new Date();
-    const deadline = new Date(now);
-    deadline.setDate(deadline.getDate() + 2); // 48 hours / 2 days SLA
+    // Use Campaign config for SLA (default 2 business days)
+    const slaDays = Math.max(1, Math.round((audit.campaign?.ztpAckSlaHours ?? 48) / 24));
+    const deadline = await this.slaEngine.calculateDueDate(now, slaDays, audit.campaignId);
 
     const updatedAudit = await this.prisma.audit.update({
       where: { id },
       data: {
-        status:
-          Math.round(percent) === 100
-            ? AuditStatus.ACKNOWLEDGED
-            : AuditStatus.RELEASED,
+        status: AuditStatus.RELEASED,
         submittedAt: now,
         releasedAt: now,
-        agentAckDeadline: Math.round(percent) === 100 ? null : deadline,
+        agentAckDeadline: deadline,
         score: percent,
         isAutoFailed,
         lastActionAt: now,
       },
+      include: {
+        agent: true,
+        auditor: true,
+        campaign: true,
+        fieldValues: true,
+        formVersion: {
+          include: {
+            form: { select: { name: true } },
+          },
+        },
+      },
     });
 
-    // --- TRANSPARENT NOTIFICATION LOGIC ---
+    // Fire-and-forget background notifications
+    this.sendSubmissionNotifications(updatedAudit, percent, isAutoFailed).catch(
+      (err) => console.error('Background notification failed:', err),
+    );
+
+    return updatedAudit;
+  }
+
+  private async sendSubmissionNotifications(
+    audit: any,
+    percent: number,
+    isAutoFailed: boolean,
+  ) {
     try {
       const ccEmails: string[] = [];
+      const interactionDate =
+        audit.fieldValues.find((f: any) => f.fieldName === 'interactionDate')
+          ?.value || 'N/A';
 
-      // 1. Ops Hierarchy (Supervisor/Manager)
-      if (audit.agent.supervisor) {
-        const sup = await this.prisma.user.findFirst({
-          where: {
-            name: {
-              equals: audit.agent.supervisor.trim(),
-              mode: 'insensitive',
-            },
-          },
-          select: { email: true },
-        });
-        if (sup?.email) ccEmails.push(sup.email);
-      }
-      if (audit.agent.manager) {
-        const mgr = await this.prisma.user.findFirst({
-          where: {
-            name: { equals: audit.agent.manager.trim(), mode: 'insensitive' },
-          },
-          select: { email: true },
-        });
-        if (mgr?.email) ccEmails.push(mgr.email);
-      }
+      // Optimized Hierarchy Check: Single query for all potential CCs
+      const hierarchyNames = [
+        audit.agent.supervisor,
+        audit.agent.manager,
+      ]
+        .filter(Boolean)
+        .map((n) => n.trim());
+
+      const hierarchyUsers = await this.prisma.user.findMany({
+        where: {
+          name: { in: hierarchyNames, mode: 'insensitive' },
+          isActive: true,
+        },
+        select: { email: true, name: true },
+      });
+
+      hierarchyUsers.forEach((u) => u.email && ccEmails.push(u.email));
 
       // 2. QA Hierarchy (QA TL / Manager)
       const qaHierarchy = await this.prisma.user.findMany({
@@ -937,11 +989,7 @@ export class AuditService {
       });
       qaHierarchy.forEach((u) => u.email && ccEmails.push(u.email));
 
-      const interactionDate =
-        audit.fieldValues.find((f) => f.fieldName === 'interactionDate')
-          ?.value || 'N/A';
-
-      // 1. Send to Agent (No CC)
+      // 1. Send to Agent
       await this.mailService.sendNewAuditToAgent({
         to: audit.agent.email,
         agentName: audit.agent.name,
@@ -951,32 +999,18 @@ export class AuditService {
         campaignName: audit.campaign?.name || audit.formVersion.form.name,
       });
 
-      // 2. Send to Ops TL (With Manager CC)
+      // 2. Send to Ops TL (Supervisor)
       if (audit.agent.supervisor) {
-        const sup = await this.prisma.user.findFirst({
-          where: {
-            name: {
-              equals: audit.agent.supervisor.trim(),
-              mode: 'insensitive',
-            },
-          },
-          select: { email: true },
-        });
+        const sup = hierarchyUsers.find(
+          (u) => u.name.toLowerCase() === audit.agent.supervisor.toLowerCase(),
+        );
 
         if (sup?.email) {
-          const managerEmails = [];
-          if (audit.agent.manager) {
-            const mgr = await this.prisma.user.findFirst({
-              where: {
-                name: {
-                  equals: audit.agent.manager.trim(),
-                  mode: 'insensitive',
-                },
-              },
-              select: { email: true },
-            });
-            if (mgr?.email) managerEmails.push(mgr.email);
-          }
+          const managerName = audit.agent.manager?.toLowerCase();
+          const managerEmails = hierarchyUsers
+            .filter((u) => u.name.toLowerCase() === managerName)
+            .map((u) => u.email)
+            .filter(Boolean) as string[];
 
           await this.mailService.sendNewAuditToOps({
             to: sup.email,
@@ -993,10 +1027,8 @@ export class AuditService {
         }
       }
     } catch (mailError) {
-      console.warn('Post-submission email failed:', mailError);
+      console.warn('Post-submission background email failed:', mailError);
     }
-
-    return updatedAudit;
   }
 
   async acknowledgeAudit(id: string, agentId: string) {

@@ -17,10 +17,14 @@ export class AuthController {
   constructor(
     private authService: AuthService,
     private usersService: UsersService,
-  ) {}
+  ) { }
 
   @Post('login')
   async login(@Body() body: any) {
+    console.log('[AUTH] Login Body:', body);
+    if (!body) {
+      throw new BadRequestException('Empty or malformed request body');
+    }
     const user = await this.authService.validateUser(body.email, body.password);
     if (!user) {
       throw new UnauthorizedException();

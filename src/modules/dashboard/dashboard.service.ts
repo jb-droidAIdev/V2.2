@@ -17,6 +17,7 @@ import {
   addDays,
   differenceInHours,
   isWeekend,
+  isSameDay,
 } from 'date-fns';
 
 @Injectable()
@@ -78,23 +79,24 @@ export class DashboardService {
       const where: any = {
         status: {
           in: [
+            AuditStatus.SUBMITTED,
             AuditStatus.RELEASED,
             AuditStatus.DISPUTED,
             AuditStatus.REAPPEALED,
-            AuditStatus.ACKNOWLEDGED,
+            (AuditStatus as any).ACKNOWLEDGED,
           ],
         },
       };
+
+      // 8. Role-based Security for Agent (Agents only see RELEASED data onwards)
+      if (role === 'AGENT') {
+        where.status.in = where.status.in.filter((s) => s !== AuditStatus.SUBMITTED);
+      }
 
       // Initialize agent filter object early to support merging
       where.agent = {};
 
       // Helper to normalize input (handle both ?key=1,2 and multiple ?key=1&key=2)
-      const normalizeArray = (val: any) => {
-        if (!val) return [];
-        const arr = Array.isArray(val) ? val : val.split(',');
-        return arr.map((v: any) => String(v).trim()).filter(Boolean);
-      };
 
       // 1. Date Range
       const now = new Date();
@@ -112,7 +114,7 @@ export class DashboardService {
       }
 
       // 2. Campaigns & Teams
-      const campaignIds = normalizeArray(filters.campaignId);
+      const campaignIds = this.normalizeArray(filters.campaignId);
       if (campaignIds.length > 0) {
         const teamNames = campaignIds
           .filter((id: string) => id.startsWith('TEAM:'))
@@ -139,13 +141,13 @@ export class DashboardService {
       }
 
       // 3. Auditor(s)
-      const auditorIds = normalizeArray(filters.auditorId);
+      const auditorIds = this.normalizeArray(filters.auditorId);
       if (auditorIds.length > 0) {
         where.auditorId = { in: auditorIds };
       }
 
       // 4. Agent Selection (Multi-select)
-      const agentIds = normalizeArray(filters.agentId);
+      const agentIds = this.normalizeArray(filters.agentId);
       if (agentIds.length > 0) {
         where.agent.id = { in: agentIds };
       }
@@ -156,10 +158,10 @@ export class DashboardService {
       }
 
       // 6. Supervisor/SDM Filters
-      const supervisors = normalizeArray(filters.supervisor);
+      const supervisors = this.normalizeArray(filters.supervisor);
       if (supervisors.length > 0) where.agent.supervisor = { in: supervisors };
 
-      const sdms = normalizeArray(filters.sdm);
+      const sdms = this.normalizeArray(filters.sdm);
       if (sdms.length > 0) where.agent.sdm = { in: sdms };
 
       // 7. Ticket ID Search (External or Reference)
@@ -229,90 +231,90 @@ export class DashboardService {
         where,
         select: {
           id: true,
+          agentId: true,
           score: true,
           status: true,
           submittedAt: true,
         },
       });
 
+      if (audits.length === 0) return this.getEmptyStats();
+
       const totalAudits = audits.length;
-      const avgScore =
-        totalAudits > 0
-          ? audits.reduce((acc, curr) => acc + (curr.score || 0), 0) /
-          totalAudits
-          : 0;
+      let totalScoreSum = 0;
+      let passingAudits = 0;
+      let disputedCount = 0;
 
-      const complianceRate =
-        audits.length > 0
-          ? (audits.filter((a) => (a.score || 0) >= 90).length /
-            audits.length) *
-          100
-          : 0;
+      audits.forEach((a) => {
+        totalScoreSum += a.score || 0;
+        if ((a.score || 0) >= 90) passingAudits++;
+        if (a.status === AuditStatus.DISPUTED || a.status === AuditStatus.REAPPEALED) disputedCount++;
+      });
 
-      const disputedCount = audits.filter(
-        (a) =>
-          a.status === AuditStatus.DISPUTED ||
-          a.status === AuditStatus.REAPPEALED,
-      ).length;
-      const disputeRate =
-        totalAudits > 0 ? (disputedCount / totalAudits) * 100 : 0;
+      const avgScore = totalScoreSum / totalAudits;
+      const complianceRate = (passingAudits / totalAudits) * 100;
+      const disputeRate = (disputedCount / totalAudits) * 100;
 
-      // 2. Trend Data
+      // 2. Trend Data - Single Pass Grouping (O(N))
       const granularity = filters.granularity || 'day';
-
       let startDate = filters.startDate ? new Date(filters.startDate) : null;
       if (!startDate || isNaN(startDate.getTime())) {
         startDate = granularity === 'month' ? subDays(now, 365) : granularity === 'week' ? subDays(now, 90) : subDays(now, 13);
       }
-
       let endDate = filters.endDate ? new Date(filters.endDate) : now;
       if (isNaN(endDate.getTime())) endDate = now;
 
       let interval;
-      if (granularity === 'month') {
-        interval = eachMonthOfInterval({ start: startDate, end: endDate });
-      } else if (granularity === 'week') {
-        interval = eachWeekOfInterval({ start: startDate, end: endDate }, { weekStartsOn: 0 });
-      } else {
-        interval = eachDayOfInterval({ start: startDate, end: endDate });
+      try {
+        if (startDate > endDate) {
+          interval = [startDate]; // Default to start date if range is invalid
+        } else if (granularity === 'month') {
+          interval = eachMonthOfInterval({ start: startDate, end: endDate });
+        } else if (granularity === 'week') {
+          interval = eachWeekOfInterval({ start: startDate, end: endDate }, { weekStartsOn: 0 });
+        } else {
+          interval = eachDayOfInterval({ start: startDate, end: endDate });
+        }
+      } catch (e) {
+        console.warn('[DASHBOARD] Interval calculation failed, falling back to empty trend:', e.message);
+        interval = [];
       }
 
-      const trend = interval.map((date) => {
-        let start, end, label;
-
+      // Pre-calculate trend buckets for O(1) lookup
+      const trendDataMap = new Map<string, { total: number; count: number }>();
+      audits.forEach((a) => {
+        if (!a.submittedAt) return;
+        let bucketKey;
         if (granularity === 'month') {
-          start = startOfMonth(date);
-          end = endOfMonth(date);
+          bucketKey = format(a.submittedAt, 'MMM yyyy');
+        } else if (granularity === 'week') {
+          bucketKey = format(startOfWeek(a.submittedAt), 'MMM d');
+        } else {
+          bucketKey = format(a.submittedAt, 'MMM dd');
+        }
+
+        const existing = trendDataMap.get(bucketKey) || { total: 0, count: 0 };
+        trendDataMap.set(bucketKey, {
+          total: existing.total + (a.score || 0),
+          count: existing.count + 1,
+        });
+      });
+
+      const trend = interval.map((date) => {
+        let label;
+        if (granularity === 'month') {
           label = format(date, 'MMM yyyy');
         } else if (granularity === 'week') {
-          start = startOfWeek(date);
-          end = endOfWeek(date);
-          label = format(start, 'MMM d');
+          label = format(startOfWeek(date), 'MMM d');
         } else {
-          start = startOfDay(date);
-          end = endOfDay(date);
           label = format(date, 'MMM dd');
         }
 
-        const periodAudits = audits.filter(
-          (a) =>
-            a.submittedAt && a.submittedAt >= start && a.submittedAt <= end,
-        );
-
+        const stats = trendDataMap.get(label);
         return {
           date: label,
-          avgScore:
-            periodAudits.length > 0
-              ? parseFloat(
-                (
-                  periodAudits.reduce(
-                    (acc, curr) => acc + (curr.score || 0),
-                    0,
-                  ) / periodAudits.length
-                ).toFixed(2),
-              )
-              : null,
-          count: periodAudits.length,
+          avgScore: stats ? parseFloat((stats.total / stats.count).toFixed(2)) : null,
+          count: stats ? stats.count : 0,
         };
       });
 
@@ -361,30 +363,30 @@ export class DashboardService {
         }))
         .sort((a, b) => b.value - a.value);
 
-      // Agent Scores Aggregation for Flip Card
-      const agentScoresRaw = await this.prisma.audit.groupBy({
-        by: ['agentId'],
-        where,
-        _count: { id: true },
-        _avg: { score: true },
+      // Agent Scores Aggregation - Manually from audits array to bypass groupBy relation filter limits
+      const agentAggregation: Record<string, { count: number; totalScore: number }> = {};
+      audits.forEach((a) => {
+        if (!agentAggregation[a.agentId])
+          agentAggregation[a.agentId] = { count: 0, totalScore: 0 };
+        agentAggregation[a.agentId].count++;
+        agentAggregation[a.agentId].totalScore += a.score || 0;
       });
 
-      const agentScores = await Promise.all(
-        agentScoresRaw.map(async (item) => {
-          const agent = await this.prisma.user.findUnique({
-            where: { id: item.agentId },
-            select: { name: true },
-          });
-          return {
-            agentId: item.agentId,
-            agentName: agent?.name || 'Unknown Agent',
-            auditCount: item._count.id,
-            avgScore: item._avg.score
-              ? parseFloat(item._avg.score.toFixed(2))
-              : 0,
-          };
-        }),
-      );
+      const agentIdsForNames = Object.keys(agentAggregation);
+      const agents = await this.prisma.user.findMany({
+        where: { id: { in: agentIdsForNames } },
+        select: { id: true, name: true }
+      });
+      const agentMap = new Map(agents.map(a => [a.id, a.name]));
+
+      const agentScores = Object.entries(agentAggregation).map(([agentId, data]) => {
+        return {
+          agentId,
+          agentName: agentMap.get(agentId) || 'Unknown Agent',
+          auditCount: data.count,
+          avgScore: parseFloat((data.totalScore / data.count).toFixed(2)),
+        };
+      });
 
       // Sort by average score descending
       agentScores.sort((a, b) => b.avgScore - a.avgScore);
@@ -394,7 +396,7 @@ export class DashboardService {
       const activeProgressions = [];
 
       // Single Agent Detection Logic:
-      const filteredAgentIds = normalizeArray(filters.agentId);
+      const filteredAgentIds = this.normalizeArray(filters.agentId);
       let targetAgentId = null;
       if (filteredAgentIds.length === 1) {
         targetAgentId = filteredAgentIds[0];
@@ -406,14 +408,40 @@ export class DashboardService {
 
       // For Management: Calculate all active progressions across the scope
       if (user.role !== Role.AGENT) {
-        // Fetch ALL failures for ALL agents in scope, plus 30-day lookback for window context
-        const bufferStartDate = subDays(startDate, 30);
+        // Fetch failures for all agents in scope. We look back 365 days (max window support) to ensure we have enough
+        // context to calculate the rolling window for any infractions found in the current period.
+        const bufferStartDate = subDays(startDate, 365);
+
         const allFailuresInScope = await this.prisma.auditScore.findMany({
           where: {
             isFailed: true,
+            criterion: {
+              categoryName: {
+                not: 'Non-Critical',
+                mode: 'insensitive',
+              },
+            },
+            categoryLabel: {
+              not: 'Non-Critical',
+              mode: 'insensitive',
+            },
             audit: {
-              ...where,
+              // We intentionally ignore campaign/agent filters here to find the FULL rolling history
+              // but we still restrict to what the user CAN see (assignedCampaignIds)
+              campaignId:
+                assignedCampaignIds.length > 0
+                  ? { in: assignedCampaignIds }
+                  : undefined,
               submittedAt: { gte: bufferStartDate, lte: endDate },
+              status: {
+                in: [
+                  AuditStatus.SUBMITTED,
+                  AuditStatus.RELEASED,
+                  AuditStatus.DISPUTED,
+                  AuditStatus.REAPPEALED,
+                  AuditStatus.ACKNOWLEDGED,
+                ],
+              },
             },
           },
           select: {
@@ -424,62 +452,77 @@ export class DashboardService {
               select: {
                 agentId: true,
                 submittedAt: true,
-                agent: { select: { name: true, employeeTeam: true } },
-                campaign: { select: { name: true } },
+                agent: { select: { id: true, name: true, employeeTeam: true } },
+                campaign: { select: { id: true, name: true, ztpMilestones: true, ztpWindowDays: true } },
               },
             },
           },
         });
 
-        const groupedByAgentCat: Record<string, Record<string, any[]>> = {};
+
+        const groupedByAgentParam: Record<string, Record<string, any[]>> = {};
         allFailuresInScope.forEach((f) => {
           const agentId = f.audit.agentId;
-          const paramStr = (
+          // Normalize parameter name for cross-version tracking
+          const rawParam = (
             f.criterionTitle ||
             f.criterion?.title ||
-            'Unknown Parameter'
-          ).trim();
-          if (!groupedByAgentCat[agentId]) groupedByAgentCat[agentId] = {};
-          if (!groupedByAgentCat[agentId][paramStr])
-            groupedByAgentCat[agentId][paramStr] = [];
-          groupedByAgentCat[agentId][paramStr].push(f);
+            'General'
+          );
+          const paramStr = rawParam.trim();
+
+          if (!groupedByAgentParam[agentId]) groupedByAgentParam[agentId] = {};
+          if (!groupedByAgentParam[agentId][paramStr])
+            groupedByAgentParam[agentId][paramStr] = [];
+          groupedByAgentParam[agentId][paramStr].push(f);
         });
 
-        for (const [agentId, params] of Object.entries(groupedByAgentCat)) {
-          for (const [category, instances] of Object.entries(params)) {
+
+        for (const [agentId, params] of Object.entries(groupedByAgentParam)) {
+          for (const [parameter, instances] of Object.entries(params)) {
             const sortedInstances = [...instances].sort(
               (a, b) =>
                 new Date(b.audit.submittedAt).getTime() -
                 new Date(a.audit.submittedAt).getTime(),
             );
 
-            // Only consider if the most recent infraction is within our primary filter range
             const latest = sortedInstances[0];
             const lastInfractionDate = new Date(latest.audit.submittedAt);
-            if (lastInfractionDate < startDate) continue;
+            const ztpWindowDays = latest.audit.campaign?.ztpWindowDays ?? 30;
+            const windowStart = subDays(lastInfractionDate, ztpWindowDays);
 
-            const windowStart = subDays(lastInfractionDate, 30);
             const count = instances.filter((i) => {
               const d = new Date(i.audit.submittedAt);
               return d >= windowStart && d <= lastInfractionDate;
             }).length;
 
-            if (count >= 3) {
+            const milestones = (latest.audit.campaign?.ztpMilestones as number[]) ?? [3, 6, 9, 12, 15];
+            const sortedMilestones = [...milestones].sort((a, b) => a - b);
+
+
+            if (count >= sortedMilestones[0]) {
               let sanction = 'Written Warning';
-              if (count >= 15) sanction = 'Termination';
-              else if (count >= 12) sanction = 'Suspension (5 Days)';
-              else if (count >= 9) sanction = 'Suspension (3 Days)';
-              else if (count >= 6) sanction = 'Final Written Warning';
+              const hitIdx = [...sortedMilestones]
+                .reverse()
+                .findIndex((m) => count >= m);
+
+              if (hitIdx === 0) sanction = 'Termination';
+              else if (hitIdx === 1) sanction = 'Suspension (5 Days)';
+              else if (hitIdx === 2) sanction = 'Suspension (3 Days)';
+              else if (hitIdx === 3) sanction = 'Final Written Warning';
+              else sanction = 'Written Warning';
 
               activeProgressions.push({
                 agentId,
-                agentName: latest.audit.agent?.name || 'Unknown',
+                agentName: latest.audit.agent?.name || (latest.audit as any).agent?.id || agentId || 'Unknown',
                 teamName: latest.audit.agent?.employeeTeam || 'Direct Report',
-                campaign:
-                  latest.audit.campaign?.name ||
-                  latest.audit.agent?.employeeTeam ||
-                  'N/A',
-                category,
+                campaign: latest.audit.campaign?.name || 'N/A',
+                category: (
+                  latest.categoryLabel ||
+                  latest.criterion?.categoryName ||
+                  'General'
+                ).trim(),
+                parameter: (parameter || 'General').trim(),
                 count,
                 sanction,
                 lastInfraction: lastInfractionDate,
@@ -496,6 +539,16 @@ export class DashboardService {
         const agentFailures = await this.prisma.auditScore.findMany({
           where: {
             isFailed: true,
+            criterion: {
+              categoryName: {
+                not: 'Non-Critical',
+                mode: 'insensitive',
+              },
+            },
+            categoryLabel: {
+              not: 'Non-Critical',
+              mode: 'insensitive',
+            },
             audit: {
               agentId: singleAgentId,
               status: {
@@ -508,12 +561,10 @@ export class DashboardService {
               },
             },
           },
-          select: {
-            categoryLabel: true,
-            criterionTitle: true,
-            criterion: { select: { categoryName: true, title: true } },
-            audit: { select: { submittedAt: true } },
-          },
+          include: {
+            audit: { include: { campaign: true } },
+            criterion: true
+          }
         });
 
         const failuresByParam: Record<string, any[]> = {};
@@ -521,40 +572,53 @@ export class DashboardService {
           const paramStr = (
             f.criterionTitle ||
             f.criterion?.title ||
-            'Unknown Parameter'
+            'General'
           ).trim();
           if (!failuresByParam[paramStr]) failuresByParam[paramStr] = [];
           failuresByParam[paramStr].push(f);
         });
 
         policyProgress = Object.entries(failuresByParam)
-          .map(([category, instances]) => {
+          .map(([parameter, instances]) => {
             const sortedInstances = [...instances].sort(
               (a, b) =>
                 new Date(b.audit.submittedAt).getTime() -
                 new Date(a.audit.submittedAt).getTime(),
             );
-            const lastInfractionDate = new Date(
-              sortedInstances[0].audit.submittedAt,
-            );
-            const windowStart = subDays(lastInfractionDate, 30);
+            const latest = sortedInstances[0];
+            const lastInfractionDate = new Date(latest.audit.submittedAt);
+            const ztpWindowDays = latest.audit.campaign?.ztpWindowDays ?? 30;
+            const windowStart = subDays(lastInfractionDate, ztpWindowDays);
             const count = instances.filter((i) => {
               const d = new Date(i.audit.submittedAt);
               return d >= windowStart && d <= lastInfractionDate;
             }).length;
 
+            const milestones = (latest.audit.campaign?.ztpMilestones as number[]) ?? [3, 6, 9, 12, 15];
+            const sortedMilestones = [...milestones].sort((a, b) => a - b);
+
             let sanction = null;
-            if (count >= 15) sanction = 'For Termination';
-            else if (count >= 12) sanction = 'For Suspension (5 Days)';
-            else if (count >= 9) sanction = 'For Suspension (3 Days)';
-            else if (count >= 6) sanction = 'For Final Written Warning';
-            else if (count >= 3) sanction = 'For Written Warning';
+            if (count >= sortedMilestones[0]) {
+              const hitIdx = [...sortedMilestones]
+                .reverse()
+                .findIndex((m) => count >= m);
+              if (hitIdx === 0) sanction = 'For Termination';
+              else if (hitIdx === 1) sanction = 'For Suspension (5 Days)';
+              else if (hitIdx === 2) sanction = 'For Suspension (3 Days)';
+              else if (hitIdx === 3) sanction = 'For Final Written Warning';
+              else sanction = 'For Written Warning';
+            }
 
             return {
-              category,
+              category:
+                latest.categoryLabel ||
+                latest.criterion?.categoryName ||
+                'General',
+              parameter,
               count,
               lastInfraction: lastInfractionDate,
               sanction,
+              milestones: sortedMilestones, // Pass milestones to frontend
             };
           })
           .sort((a, b) => b.count - a.count);
@@ -610,7 +674,7 @@ export class DashboardService {
       };
     } catch (error) {
       console.error('[DASHBOARD] getStats ERROR:', error);
-      return { error: error.message, stack: error.stack };
+      return this.getEmptyStats();
     }
   }
 
@@ -775,33 +839,34 @@ export class DashboardService {
         if (assignedCampaignIds.length === 0) return this.getEmptyCoachingStats();
       }
 
+      let requestedStart = subDays(now, 14);
+      if (filters.startDate) {
+        const d = new Date(filters.startDate);
+        if (!isNaN(d.getTime())) requestedStart = d;
+      }
+      requestedStart = startOfDay(requestedStart);
+
+      let requestedEnd = now;
+      if (filters.endDate) {
+        const d = new Date(filters.endDate);
+        if (!isNaN(d.getTime())) requestedEnd = d;
+      }
+      requestedEnd = endOfDay(requestedEnd);
+
+      // Final safety for interval methods
+      if (requestedStart > requestedEnd) {
+        requestedStart = startOfDay(requestedEnd);
+      }
+
       const where: any = {
-        releasedAt: { not: null },
         status: { in: [AuditStatus.RELEASED, AuditStatus.ACKNOWLEDGED] },
-        agent: { is: {} },
-        OR: [
-          { score: { lt: 100 } },
-          { score: null }
-        ]
+        releasedAt: { gte: requestedStart, lte: requestedEnd },
       };
 
       if (role === 'AGENT') {
         where.agentId = user.id;
       } else if (restrictedRoles.includes(role)) {
         where.campaignId = { in: assignedCampaignIds };
-      }
-
-      // Filters
-      if (filters.startDate || filters.endDate) {
-        where.releasedAt = { not: null };
-        if (filters.startDate) {
-          const sd = new Date(filters.startDate);
-          if (!isNaN(sd.getTime())) where.releasedAt.gte = sd;
-        }
-        if (filters.endDate) {
-          const ed = new Date(filters.endDate);
-          if (!isNaN(ed.getTime())) where.releasedAt.lte = endOfDay(ed);
-        }
       }
 
       const campaignIds = this.normalizeArray(filters.campaignId);
@@ -814,12 +879,14 @@ export class DashboardService {
       if (auditorIds.length > 0) where.auditorId = { in: auditorIds };
 
       const agentIds = this.normalizeArray(filters.agentId);
-      if (agentIds.length > 0) where.agent.id = { in: agentIds };
-
       const supervisors = this.normalizeArray(filters.supervisor);
-      if (supervisors.length > 0) where.agent.supervisor = { in: supervisors };
-
-      if (Object.keys(where.agent).length === 0) delete where.agent;
+      
+      if (agentIds.length > 0 || supervisors.length > 0) {
+        where.agent = {
+          ...(agentIds.length > 0 ? { id: { in: agentIds } } : {}),
+          ...(supervisors.length > 0 ? { supervisor: { in: supervisors } } : {}),
+        };
+      }
 
       const audits = await this.prisma.audit.findMany({
         where,
@@ -829,6 +896,9 @@ export class DashboardService {
           coachingLog: { include: { supervisor: true } },
         },
       });
+
+      if (audits.length === 0) return this.getEmptyCoachingStats();
+
 
       const results = audits.map((audit) => {
         try {
@@ -857,6 +927,7 @@ export class DashboardService {
           }
 
           const isBreached = status === 'Late' || status === 'Overdue';
+          const requiresCoaching = (audit.score || 0) < 100;
 
           return {
             id: audit.id,
@@ -870,6 +941,8 @@ export class DashboardService {
             coachingDate,
             deadline,
             ticketReference: audit.ticketReference,
+            score: audit.score,
+            requiresCoaching,
           };
         } catch (e) {
           return null;
@@ -881,18 +954,24 @@ export class DashboardService {
       const supervisorMap = new Map();
 
       results.forEach(r => {
+        if (!r.requiresCoaching) return; // Skip 100% audits for these metrics
+
         // Agent Table Stats
         if (!agentMap.has(r.agentName)) {
           agentMap.set(r.agentName, {
             name: r.agentName, total: 0, completed: 0, pending: 0, overdue: 0,
-            early: 0, onTime: 0, late: 0, breached: 0
+            early: 0, onTime: 0, late: 0, breached: 0, metricsTotal: 0
           });
         }
         const a = agentMap.get(r.agentName);
         a.total++;
+        a.metricsTotal++;
+
         if (r.acknowledged) a.completed++;
         else if (r.isReleased) a.pending++;
         else if (r.status === 'Overdue') a.overdue++;
+
+        if (r.status !== 'Not Started') a.metricsTotal++;
 
         if (r.status === 'Early') a.early++;
         else if (r.status === 'On-Time') a.onTime++;
@@ -905,14 +984,17 @@ export class DashboardService {
         if (!supervisorMap.has(sName)) {
           supervisorMap.set(sName, {
             name: sName, total: 0, completed: 0, pending: 0, overdue: 0,
-            early: 0, onTime: 0, late: 0, breached: 0
+            early: 0, onTime: 0, late: 0, breached: 0, metricsTotal: 0
           });
         }
         const s = supervisorMap.get(sName);
         s.total++;
+
         if (r.acknowledged) s.completed++;
         else if (r.isReleased) s.pending++;
         else if (r.status === 'Overdue') s.overdue++;
+
+        if (r.status !== 'Not Started') s.metricsTotal++;
 
         if (r.status === 'Early') s.early++;
         else if (r.status === 'On-Time') s.onTime++;
@@ -921,34 +1003,56 @@ export class DashboardService {
         if (r.isBreached) s.breached++;
       });
 
-      const agentCoverage = Array.from(agentMap.values()).map(a => ({
-        ...a,
-        complianceRate: a.total > 0 ? ((a.total - a.breached) / a.total) * 100 : 0
-      })).sort((a, b) => b.overdue - a.overdue);
+      const supervisorAccountability = Array.from(supervisorMap.values()).map(s => {
+        return {
+          ...s,
+          compliance: s.total > 0 ? ((s.completed + s.pending) / s.total) * 100 : 100
+        };
+      }).sort((a, b) => a.compliance - b.compliance);
 
-      const supervisorAccountability = Array.from(supervisorMap.values()).map(s => ({
-        ...s,
-        compliance: s.total > 0 ? ((s.total - s.breached) / s.total) * 100 : 0
-      })).sort((a, b) => a.compliance - b.compliance);
+      const agentCoverage = Array.from(agentMap.values()).map(a => {
+        const denom = a.pending + a.overdue;
+        return {
+          ...a,
+          complianceRate: denom > 0 ? (a.completed / denom) * 100 : 100
+        };
+      }).sort((a, b) => b.overdue - a.overdue);
 
-      const totalAudits = results.length;
-      const totalBreached = results.filter(r => r.isBreached).length;
-      const complianceRate = totalAudits > 0 ? ((totalAudits - totalBreached) / totalAudits) * 100 : 0;
+      const mandatoryResults = results.filter(r => r.requiresCoaching && r.sentDate >= requestedStart && r.sentDate <= requestedEnd);
+      const totalMandatory = mandatoryResults.length;
+      
+      const mCompleted = mandatoryResults.filter(r => r.acknowledged).length;
+      const mPending = mandatoryResults.filter(r => r.isReleased && !r.acknowledged).length;
+      const mOverdue = mandatoryResults.filter(r => r.status === 'Overdue').length;
+
+      const earlyMandatory = mandatoryResults.filter(r => r.status === 'Early').length;
+      const onTimeMandatory = mandatoryResults.filter(r => r.status === 'On-Time').length;
+      const lateMandatory = mandatoryResults.filter(r => r.status === 'Late').length;
+
+      const compliantMandatory = earlyMandatory + onTimeMandatory;
+      const releasedMandatory = earlyMandatory + onTimeMandatory + lateMandatory;
+
+      const supervisorAvg = supervisorAccountability.length > 0
+        ? supervisorAccountability.reduce((sum, s) => sum + s.compliance, 0) / supervisorAccountability.length
+        : 100;
+
+      const complianceRate = supervisorAvg;
+      const onTimeRate = releasedMandatory > 0 ? (compliantMandatory / releasedMandatory) * 100 : 0;
 
       const summary = {
-        totalAudits,
-        completed: results.filter(r => r.acknowledged).length,
-        pending: results.filter(r => r.isReleased && !r.acknowledged).length,
+        totalAudits: totalMandatory,
+        completed: results.filter(r => r.requiresCoaching && r.acknowledged).length,
+        pending: results.filter(r => r.requiresCoaching && r.isReleased && !r.acknowledged).length,
         complianceRate,
-        onTimeRate: complianceRate,
-        early: results.filter(r => r.status === 'Early').length,
-        late: results.filter(r => r.status === 'Late').length,
-        overdue: results.filter(r => r.status === 'Overdue').length,
-        notStarted: results.filter(r => r.status === 'Not Started').length,
+        onTimeRate,
+        early: results.filter(r => r.requiresCoaching && r.status === 'Early').length,
+        late: results.filter(r => r.requiresCoaching && r.status === 'Late').length,
+        overdue: results.filter(r => r.requiresCoaching && r.status === 'Overdue').length,
+        notStarted: results.filter(r => r.requiresCoaching && r.status === 'Not Started').length,
       };
 
       const overdueTracker = results
-        .filter(r => r.status === 'Overdue')
+        .filter(r => r.requiresCoaching && r.status === 'Overdue')
         .map(r => ({
           id: r.id,
           agentName: r.agentName,
@@ -961,13 +1065,15 @@ export class DashboardService {
         .sort((a, b) => b.hoursOverdue - a.hoursOverdue);
 
       const pendingTracker = results
-        .filter(r => r.isReleased && !r.acknowledged)
+        .filter(r => r.requiresCoaching && r.isReleased && !r.acknowledged)
         .sort((a, b) => b.sentDate.getTime() - a.sentDate.getTime());
 
-      // Activity Trend with Granularity
+      // Activity Trend - Single Pass Grouping (O(N))
       const granularity = filters.granularity || 'day';
       let trendStart = filters.startDate ? new Date(filters.startDate) : null;
-      if (!trendStart || isNaN(trendStart.getTime())) trendStart = subDays(now, 14);
+      if (!trendStart || isNaN(trendStart.getTime())) {
+        trendStart = granularity === 'month' ? subDays(now, 365) : granularity === 'week' ? subDays(now, 90) : subDays(now, 14);
+      }
       trendStart = startOfDay(trendStart);
 
       let trendEnd = filters.endDate ? new Date(filters.endDate) : now;
@@ -975,54 +1081,88 @@ export class DashboardService {
       trendEnd = endOfDay(trendEnd);
 
       let interval;
-      if (granularity === 'month') {
-        interval = eachMonthOfInterval({ start: trendStart, end: trendEnd });
-      } else if (granularity === 'week') {
-        interval = eachWeekOfInterval({ start: trendStart, end: trendEnd }, { weekStartsOn: 0 }); // 0 = Sunday
-      } else {
-        interval = eachDayOfInterval({ start: trendStart, end: trendEnd });
+      try {
+        if (trendStart > trendEnd) {
+          interval = [trendStart];
+        } else if (granularity === 'month') {
+          interval = eachMonthOfInterval({ start: trendStart, end: trendEnd });
+        } else if (granularity === 'week') {
+          interval = eachWeekOfInterval({ start: trendStart, end: trendEnd }, { weekStartsOn: 0 }); // 0 = Sunday
+        } else {
+          interval = eachDayOfInterval({ start: trendStart, end: trendEnd });
+        }
+      } catch (e) {
+        console.warn('[COACHING_STATS] Interval failed:', e.message);
+        interval = [];
       }
 
-      const activityTrend = interval.map((date) => {
-        let start, end, label;
+      // Pre-calculate buckets
+      const mandatoryTrendMap = new Map<string, number>();
+      const optionalTrendMap = new Map<string, number>();
 
+      results.forEach((r) => {
+        if (!r.coachingDate) return;
+        const d = r.coachingDate instanceof Date ? r.coachingDate : new Date(r.coachingDate);
+        
+        let bucketKey;
         if (granularity === 'month') {
-          start = startOfMonth(date);
-          end = endOfMonth(date);
-          label = format(date, 'MMM yyyy');
+          bucketKey = format(d, 'MMM yyyy');
         } else if (granularity === 'week') {
-          start = startOfWeek(date, { weekStartsOn: 0 });
-          end = endOfWeek(date, { weekStartsOn: 0 });
-          label = `Week of ${format(start, 'MMM d')}`;
+          bucketKey = `Week of ${format(startOfWeek(d, { weekStartsOn: 0 }), 'MMM d')}`;
         } else {
-          start = startOfDay(date);
-          end = endOfDay(date);
-          label = format(date, 'MMM dd');
+          bucketKey = format(d, 'MMM dd');
         }
 
-        const count = results.filter((r) => {
-          if (!r.coachingDate) return false;
-          const d = new Date(r.coachingDate);
-          return d >= start && d <= end;
-        }).length;
+        if (r.requiresCoaching) {
+          mandatoryTrendMap.set(bucketKey, (mandatoryTrendMap.get(bucketKey) || 0) + 1);
+        } else {
+          optionalTrendMap.set(bucketKey, (optionalTrendMap.get(bucketKey) || 0) + 1);
+        }
+      });
 
-        return { date: label, count };
+      const mandatoryActivityTrend = interval.map((date) => {
+        let label;
+        if (granularity === 'month') {
+          label = format(date, 'MMM yyyy');
+        } else if (granularity === 'week') {
+          label = `Week of ${format(startOfWeek(date, { weekStartsOn: 0 }), 'MMM d')}`;
+        } else {
+          label = format(date, 'MMM dd');
+        }
+        return { date: label, count: mandatoryTrendMap.get(label) || 0 };
+      });
+
+      const optionalActivityTrend = interval.map((date) => {
+        let label;
+        if (granularity === 'month') {
+          label = format(date, 'MMM yyyy');
+        } else if (granularity === 'week') {
+          label = `Week of ${format(startOfWeek(date, { weekStartsOn: 0 }), 'MMM d')}`;
+        } else {
+          label = format(date, 'MMM dd');
+        }
+        return { date: label, count: optionalTrendMap.get(label) || 0 };
       });
 
       return {
         summary,
         timelinessBreakdown: [
-          { name: 'Early', value: summary.early },
+          { name: 'Early', value: results.filter(r => r.status === 'Early').length },
           { name: 'On-Time', value: results.filter(r => r.status === 'On-Time').length },
-          { name: 'Late', value: summary.late },
-          { name: 'Overdue', value: summary.overdue },
-          { name: 'Not Started', value: summary.notStarted },
+          { name: 'Late', value: results.filter(r => r.status === 'Late').length },
+          { name: 'Overdue', value: results.filter(r => r.status === 'Overdue' && r.requiresCoaching).length },
+          { name: 'Not Started', value: results.filter(r => r.status === 'Not Started' && r.requiresCoaching).length },
         ],
         supervisorAccountability,
         agentCoverage,
         overdueTracker,
         pendingTracker,
-        activityTrend,
+        mandatoryActivityTrend,
+        optionalActivityTrend,
+        activityTrend: mandatoryActivityTrend.map((m, i) => ({
+          date: m.date,
+          count: m.count + (optionalActivityTrend[i]?.count || 0)
+        })),
       };
     } catch (error) {
       console.error('[COACHING_STATS] ERROR:', error);
@@ -1058,6 +1198,8 @@ export class DashboardService {
       agentCoverage: [],
       overdueTracker: [],
       pendingTracker: [],
+      mandatoryActivityTrend: [],
+      optionalActivityTrend: [],
       activityTrend: [],
     };
   }

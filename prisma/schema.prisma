@@ -38,13 +38,18 @@ model User {
   calibrationResults         CalibrationResult[]      @relation("UserCalibrationResults")
   createdCalibrationSessions CalibrationSession[]     @relation("CalibrationSessionCreator")
   qaAssignments              CampaignQA[]
+  coachingConducted          CoachingLog[]            @relation("SupervisorCoaching")
   disputesRaised             Dispute[]                @relation("DisputeRaiser")
   createdFormVersions        MonitoringFormVersion[]  @relation("FormVersionCreator")
   notifications              Notification[]
   uploadedBatches            TicketUploadBatch[]
   userRole                   UserRole?                @relation(fields: [roleId], references: [id])
   customPermissions          UserPermission[]
-  coachingConducted          CoachingLog[]            @relation("SupervisorCoaching")
+
+  @@index([employeeTeam])
+  @@index([role])
+  @@index([isActive])
+  @@index([name])
 }
 
 model Campaign {
@@ -57,6 +62,11 @@ model Campaign {
   updatedAt           DateTime             @updatedAt
   type                CampaignType         @default(USER)
   projectCode         String?
+  ztpAckSlaHours      Int                  @default(48)
+  ztpMilestones       Int[]                @default([3, 6, 9, 12, 15])
+  ztpWindowDays       Int                  @default(30)
+  disputeWindowDays   Int                  @default(5)
+  reappealWindowDays  Int                  @default(3)
   audits              Audit[]
   calibrationSessions CalibrationSession[] @relation("CampaignCalibrationSessions")
   qaAssignments       CampaignQA[]
@@ -91,6 +101,7 @@ model MonitoringForm {
   isConfigured  Boolean                 @default(false)
   isArchived    Boolean                 @default(false)
   dispositions  String[]                @default([])
+  methodology   String?
   qaAssignments CampaignQA[]
   campaign      Campaign?               @relation(fields: [campaignId], references: [id])
   versions      MonitoringFormVersion[]
@@ -211,9 +222,9 @@ model Audit {
   userViews          AuditUserView[]
   calibrationAnchors CalibrationAnchor[]
   CalibrationTickets CalibrationTicket[]
+  coachingLog        CoachingLog?
   dispute            Dispute?
   releaseInfo        ReleaseRecord?
-  coachingLog        CoachingLog?
 
   @@index([campaignId])
   @@index([auditorId])
@@ -221,6 +232,8 @@ model Audit {
   @@index([status])
   @@index([startedAt])
   @@index([submittedAt])
+  @@index([releasedAt])
+  @@index([ticketReference])
 }
 
 model AuditUserView {
@@ -260,6 +273,9 @@ model AuditScore {
 
   @@unique([auditId, criterionId])
   @@index([auditId])
+  @@index([categoryLabel])
+  @@index([criterionTitle])
+  @@index([isFailed])
 }
 
 model AuditEvent {
@@ -515,6 +531,21 @@ model RoleTemplate {
   role Role
 }
 
+model CoachingLog {
+  id                String    @id @default(uuid())
+  auditId           String    @unique
+  supervisorId      String
+  releasedAt        DateTime?
+  supervisorRemarks String?
+  actionPlan        Json?
+  agentCommitment   String?
+  agentAckAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  audit             Audit     @relation(fields: [auditId], references: [id])
+  supervisor        User      @relation("SupervisorCoaching", fields: [supervisorId], references: [id])
+}
+
 enum Role {
   AGENT
   QA
@@ -581,18 +612,4 @@ enum CalibrationAnchorStatus {
   VALIDATED
   REJECTED
   NON_MATCHING
-}
-model CoachingLog {
-  id                String    @id @default(uuid())
-  auditId           String    @unique
-  supervisorId      String
-  releasedAt        DateTime?
-  supervisorRemarks String?   @db.Text
-  actionPlan        Json?     // Array of { activity, owner, deadline, successMeasurement, goal }
-  agentCommitment   String?   @db.Text
-  agentAckAt        DateTime?
-  audit             Audit     @relation(fields: [auditId], references: [id])
-  supervisor        User      @relation("SupervisorCoaching", fields: [supervisorId], references: [id])
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
 }

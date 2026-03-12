@@ -21,6 +21,7 @@ export class ErrorLoggingInterceptor implements NestInterceptor {
         );
         if (err.stack) {
           this.logger.error(err.stack);
+          require('fs').appendFileSync('error.log', err.stack + '\n\n');
         }
         return throwError(() => err);
       }),

@@ -85,8 +85,12 @@ export class AuditController {
   // Submit a completed audit — requires AUDIT_CREATE
   @Permissions(Permission.AUDIT_CREATE)
   @Post(':id/submit')
-  submit(@Param('id') id: string, @Request() req: any) {
-    return this.auditService.submit(id, req.user.id);
+  submit(
+    @Param('id') id: string,
+    @Body() body: any,
+    @Request() req: any,
+  ) {
+    return this.auditService.submit(id, req.user.id, body);
   }
 
   // Discard an in-progress audit

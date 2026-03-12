@@ -34,6 +34,7 @@ export class DashboardService {
       campaignId?: string | string[];
       supervisor?: string | string[];
       sdm?: string | string[];
+      manager?: string | string[];
       auditorId?: string | string[];
       granularity?: 'day' | 'week' | 'month';
     },
@@ -163,6 +164,9 @@ export class DashboardService {
 
       const sdms = this.normalizeArray(filters.sdm);
       if (sdms.length > 0) where.agent.sdm = { in: sdms };
+
+      const managers = this.normalizeArray(filters.manager);
+      if (managers.length > 0) where.agent.manager = { in: managers };
 
       // 7. Ticket ID Search (External or Reference)
       if (filters.ticketId) {
@@ -762,6 +766,16 @@ export class DashboardService {
         distinct: ['sdm'],
       });
 
+      // Managers
+      const managersRaw = await this.prisma.user.findMany({
+        where: {
+          manager: { not: null },
+          ...(!isStaff || isManagerRestricted ? visibilityFilter : {}),
+        },
+        select: { manager: true },
+        distinct: ['manager'],
+      });
+
       // Teams (Employee Teams)
       const userTeams = await this.prisma.user.findMany({
         where: {
@@ -812,6 +826,10 @@ export class DashboardService {
           .sort(),
         sdms: sdmsRaw
           .map((s) => s.sdm)
+          .filter(Boolean)
+          .sort(),
+        managers: managersRaw
+          .map((m) => m.manager)
           .filter(Boolean)
           .sort(),
         agents: auditedAgents,
@@ -880,11 +898,13 @@ export class DashboardService {
 
       const agentIds = this.normalizeArray(filters.agentId);
       const supervisors = this.normalizeArray(filters.supervisor);
-      
-      if (agentIds.length > 0 || supervisors.length > 0) {
+      const managers = this.normalizeArray(filters.manager);
+
+      if (agentIds.length > 0 || supervisors.length > 0 || managers.length > 0) {
         where.agent = {
           ...(agentIds.length > 0 ? { id: { in: agentIds } } : {}),
           ...(supervisors.length > 0 ? { supervisor: { in: supervisors } } : {}),
+          ...(managers.length > 0 ? { manager: { in: managers } } : {}),
         };
       }
 

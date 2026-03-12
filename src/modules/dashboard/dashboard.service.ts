@@ -97,11 +97,6 @@ export class DashboardService {
       where.agent = {};
 
       // Helper to normalize input (handle both ?key=1,2 and multiple ?key=1&key=2)
-      const normalizeArray = (val: any) => {
-        if (!val) return [];
-        const arr = Array.isArray(val) ? val : val.split(',');
-        return arr.map((v: any) => String(v).trim()).filter(Boolean);
-      };
 
       // 1. Date Range
       const now = new Date();
@@ -119,7 +114,7 @@ export class DashboardService {
       }
 
       // 2. Campaigns & Teams
-      const campaignIds = normalizeArray(filters.campaignId);
+      const campaignIds = this.normalizeArray(filters.campaignId);
       if (campaignIds.length > 0) {
         const teamNames = campaignIds
           .filter((id: string) => id.startsWith('TEAM:'))
@@ -146,13 +141,13 @@ export class DashboardService {
       }
 
       // 3. Auditor(s)
-      const auditorIds = normalizeArray(filters.auditorId);
+      const auditorIds = this.normalizeArray(filters.auditorId);
       if (auditorIds.length > 0) {
         where.auditorId = { in: auditorIds };
       }
 
       // 4. Agent Selection (Multi-select)
-      const agentIds = normalizeArray(filters.agentId);
+      const agentIds = this.normalizeArray(filters.agentId);
       if (agentIds.length > 0) {
         where.agent.id = { in: agentIds };
       }
@@ -163,10 +158,10 @@ export class DashboardService {
       }
 
       // 6. Supervisor/SDM Filters
-      const supervisors = normalizeArray(filters.supervisor);
+      const supervisors = this.normalizeArray(filters.supervisor);
       if (supervisors.length > 0) where.agent.supervisor = { in: supervisors };
 
-      const sdms = normalizeArray(filters.sdm);
+      const sdms = this.normalizeArray(filters.sdm);
       if (sdms.length > 0) where.agent.sdm = { in: sdms };
 
       // 7. Ticket ID Search (External or Reference)
@@ -243,84 +238,83 @@ export class DashboardService {
         },
       });
 
+      if (audits.length === 0) return this.getEmptyStats();
+
       const totalAudits = audits.length;
-      const avgScore =
-        totalAudits > 0
-          ? audits.reduce((acc, curr) => acc + (curr.score || 0), 0) /
-          totalAudits
-          : 0;
+      let totalScoreSum = 0;
+      let passingAudits = 0;
+      let disputedCount = 0;
 
-      const complianceRate =
-        audits.length > 0
-          ? (audits.filter((a) => (a.score || 0) >= 90).length /
-            audits.length) *
-          100
-          : 0;
+      audits.forEach((a) => {
+        totalScoreSum += a.score || 0;
+        if ((a.score || 0) >= 90) passingAudits++;
+        if (a.status === AuditStatus.DISPUTED || a.status === AuditStatus.REAPPEALED) disputedCount++;
+      });
 
-      const disputedCount = audits.filter(
-        (a) =>
-          a.status === AuditStatus.DISPUTED ||
-          a.status === AuditStatus.REAPPEALED,
-      ).length;
-      const disputeRate =
-        totalAudits > 0 ? (disputedCount / totalAudits) * 100 : 0;
+      const avgScore = totalScoreSum / totalAudits;
+      const complianceRate = (passingAudits / totalAudits) * 100;
+      const disputeRate = (disputedCount / totalAudits) * 100;
 
-      // 2. Trend Data
+      // 2. Trend Data - Single Pass Grouping (O(N))
       const granularity = filters.granularity || 'day';
-
       let startDate = filters.startDate ? new Date(filters.startDate) : null;
       if (!startDate || isNaN(startDate.getTime())) {
         startDate = granularity === 'month' ? subDays(now, 365) : granularity === 'week' ? subDays(now, 90) : subDays(now, 13);
       }
-
       let endDate = filters.endDate ? new Date(filters.endDate) : now;
       if (isNaN(endDate.getTime())) endDate = now;
 
       let interval;
-      if (granularity === 'month') {
-        interval = eachMonthOfInterval({ start: startDate, end: endDate });
-      } else if (granularity === 'week') {
-        interval = eachWeekOfInterval({ start: startDate, end: endDate }, { weekStartsOn: 0 });
-      } else {
-        interval = eachDayOfInterval({ start: startDate, end: endDate });
+      try {
+        if (startDate > endDate) {
+          interval = [startDate]; // Default to start date if range is invalid
+        } else if (granularity === 'month') {
+          interval = eachMonthOfInterval({ start: startDate, end: endDate });
+        } else if (granularity === 'week') {
+          interval = eachWeekOfInterval({ start: startDate, end: endDate }, { weekStartsOn: 0 });
+        } else {
+          interval = eachDayOfInterval({ start: startDate, end: endDate });
+        }
+      } catch (e) {
+        console.warn('[DASHBOARD] Interval calculation failed, falling back to empty trend:', e.message);
+        interval = [];
       }
 
-      const trend = interval.map((date) => {
-        let start, end, label;
-
+      // Pre-calculate trend buckets for O(1) lookup
+      const trendDataMap = new Map<string, { total: number; count: number }>();
+      audits.forEach((a) => {
+        if (!a.submittedAt) return;
+        let bucketKey;
         if (granularity === 'month') {
-          start = startOfMonth(date);
-          end = endOfMonth(date);
+          bucketKey = format(a.submittedAt, 'MMM yyyy');
+        } else if (granularity === 'week') {
+          bucketKey = format(startOfWeek(a.submittedAt), 'MMM d');
+        } else {
+          bucketKey = format(a.submittedAt, 'MMM dd');
+        }
+
+        const existing = trendDataMap.get(bucketKey) || { total: 0, count: 0 };
+        trendDataMap.set(bucketKey, {
+          total: existing.total + (a.score || 0),
+          count: existing.count + 1,
+        });
+      });
+
+      const trend = interval.map((date) => {
+        let label;
+        if (granularity === 'month') {
           label = format(date, 'MMM yyyy');
         } else if (granularity === 'week') {
-          start = startOfWeek(date);
-          end = endOfWeek(date);
-          label = format(start, 'MMM d');
+          label = format(startOfWeek(date), 'MMM d');
         } else {
-          start = startOfDay(date);
-          end = endOfDay(date);
           label = format(date, 'MMM dd');
         }
 
-        const periodAudits = audits.filter(
-          (a) =>
-            a.submittedAt && a.submittedAt >= start && a.submittedAt <= end,
-        );
-
+        const stats = trendDataMap.get(label);
         return {
           date: label,
-          avgScore:
-            periodAudits.length > 0
-              ? parseFloat(
-                (
-                  periodAudits.reduce(
-                    (acc, curr) => acc + (curr.score || 0),
-                    0,
-                  ) / periodAudits.length
-                ).toFixed(2),
-              )
-              : null,
-          count: periodAudits.length,
+          avgScore: stats ? parseFloat((stats.total / stats.count).toFixed(2)) : null,
+          count: stats ? stats.count : 0,
         };
       });
 
@@ -402,7 +396,7 @@ export class DashboardService {
       const activeProgressions = [];
 
       // Single Agent Detection Logic:
-      const filteredAgentIds = normalizeArray(filters.agentId);
+      const filteredAgentIds = this.normalizeArray(filters.agentId);
       let targetAgentId = null;
       if (filteredAgentIds.length === 1) {
         targetAgentId = filteredAgentIds[0];
@@ -845,8 +839,24 @@ export class DashboardService {
         if (assignedCampaignIds.length === 0) return this.getEmptyCoachingStats();
       }
 
-      const requestedStart = filters.startDate ? startOfDay(new Date(filters.startDate)) : startOfDay(subDays(now, 14));
-      const requestedEnd = filters.endDate ? endOfDay(new Date(filters.endDate)) : endOfDay(now);
+      let requestedStart = subDays(now, 14);
+      if (filters.startDate) {
+        const d = new Date(filters.startDate);
+        if (!isNaN(d.getTime())) requestedStart = d;
+      }
+      requestedStart = startOfDay(requestedStart);
+
+      let requestedEnd = now;
+      if (filters.endDate) {
+        const d = new Date(filters.endDate);
+        if (!isNaN(d.getTime())) requestedEnd = d;
+      }
+      requestedEnd = endOfDay(requestedEnd);
+
+      // Final safety for interval methods
+      if (requestedStart > requestedEnd) {
+        requestedStart = startOfDay(requestedEnd);
+      }
 
       const where: any = {
         status: { in: [AuditStatus.RELEASED, AuditStatus.ACKNOWLEDGED] },
@@ -886,6 +896,8 @@ export class DashboardService {
           coachingLog: { include: { supervisor: true } },
         },
       });
+
+      if (audits.length === 0) return this.getEmptyCoachingStats();
 
 
       const results = audits.map((audit) => {
@@ -1054,10 +1066,12 @@ export class DashboardService {
         .filter(r => r.requiresCoaching && r.isReleased && !r.acknowledged)
         .sort((a, b) => b.sentDate.getTime() - a.sentDate.getTime());
 
-      // Activity Trend with Granularity
+      // Activity Trend - Single Pass Grouping (O(N))
       const granularity = filters.granularity || 'day';
       let trendStart = filters.startDate ? new Date(filters.startDate) : null;
-      if (!trendStart || isNaN(trendStart.getTime())) trendStart = subDays(now, 14);
+      if (!trendStart || isNaN(trendStart.getTime())) {
+        trendStart = granularity === 'month' ? subDays(now, 365) : granularity === 'week' ? subDays(now, 90) : subDays(now, 14);
+      }
       trendStart = startOfDay(trendStart);
 
       let trendEnd = filters.endDate ? new Date(filters.endDate) : now;
@@ -1065,71 +1079,68 @@ export class DashboardService {
       trendEnd = endOfDay(trendEnd);
 
       let interval;
-      if (granularity === 'month') {
-        interval = eachMonthOfInterval({ start: trendStart, end: trendEnd });
-      } else if (granularity === 'week') {
-        interval = eachWeekOfInterval({ start: trendStart, end: trendEnd }, { weekStartsOn: 0 }); // 0 = Sunday
-      } else {
-        interval = eachDayOfInterval({ start: trendStart, end: trendEnd });
+      try {
+        if (trendStart > trendEnd) {
+          interval = [trendStart];
+        } else if (granularity === 'month') {
+          interval = eachMonthOfInterval({ start: trendStart, end: trendEnd });
+        } else if (granularity === 'week') {
+          interval = eachWeekOfInterval({ start: trendStart, end: trendEnd }, { weekStartsOn: 0 }); // 0 = Sunday
+        } else {
+          interval = eachDayOfInterval({ start: trendStart, end: trendEnd });
+        }
+      } catch (e) {
+        console.warn('[COACHING_STATS] Interval failed:', e.message);
+        interval = [];
       }
 
-      const mandatoryActivityTrend = interval.map((date) => {
-        let start, end, label;
+      // Pre-calculate buckets
+      const mandatoryTrendMap = new Map<string, number>();
+      const optionalTrendMap = new Map<string, number>();
 
+      results.forEach((r) => {
+        if (!r.coachingDate) return;
+        const d = r.coachingDate instanceof Date ? r.coachingDate : new Date(r.coachingDate);
+        
+        let bucketKey;
         if (granularity === 'month') {
-          start = startOfMonth(date);
-          end = endOfMonth(date);
-          label = format(date, 'MMM yyyy');
+          bucketKey = format(d, 'MMM yyyy');
         } else if (granularity === 'week') {
-          start = startOfWeek(date, { weekStartsOn: 0 });
-          end = endOfWeek(date, { weekStartsOn: 0 });
-          label = `Week of ${format(start, 'MMM d')}`;
+          bucketKey = `Week of ${format(startOfWeek(d, { weekStartsOn: 0 }), 'MMM d')}`;
         } else {
-          start = startOfDay(date);
-          end = endOfDay(date);
-          label = format(date, 'MMM dd');
+          bucketKey = format(d, 'MMM dd');
         }
 
-        // Mandatory trend: count coaching sessions PERFORMED for sub-100% audits (by date coaching was released)
-        const count = results.filter((r) => {
-          if (!r.requiresCoaching || !r.coachingDate) return false;
-          const d = r.coachingDate instanceof Date ? r.coachingDate : new Date(r.coachingDate);
-          if (granularity === 'day') return isSameDay(d, start);
-          return d >= start && d <= end;
-        }).length;
-
-        return { date: label, count };
+        if (r.requiresCoaching) {
+          mandatoryTrendMap.set(bucketKey, (mandatoryTrendMap.get(bucketKey) || 0) + 1);
+        } else {
+          optionalTrendMap.set(bucketKey, (optionalTrendMap.get(bucketKey) || 0) + 1);
+        }
       });
 
+      const mandatoryActivityTrend = interval.map((date) => {
+        let label;
+        if (granularity === 'month') {
+          label = format(date, 'MMM yyyy');
+        } else if (granularity === 'week') {
+          label = `Week of ${format(startOfWeek(date, { weekStartsOn: 0 }), 'MMM d')}`;
+        } else {
+          label = format(date, 'MMM dd');
+        }
+        return { date: label, count: mandatoryTrendMap.get(label) || 0 };
+      });
 
       const optionalActivityTrend = interval.map((date) => {
-        let start, end, label;
-
+        let label;
         if (granularity === 'month') {
-          start = startOfMonth(date);
-          end = endOfMonth(date);
           label = format(date, 'MMM yyyy');
         } else if (granularity === 'week') {
-          start = startOfWeek(date, { weekStartsOn: 0 });
-          end = endOfWeek(date, { weekStartsOn: 0 });
-          label = `Week of ${format(start, 'MMM d')}`;
+          label = `Week of ${format(startOfWeek(date, { weekStartsOn: 0 }), 'MMM d')}`;
         } else {
-          start = startOfDay(date);
-          end = endOfDay(date);
           label = format(date, 'MMM dd');
         }
-
-        // Optional trend: count coaching sessions PERFORMED for 100% score audits (by date coaching was released)
-        const count = results.filter((r) => {
-          if (r.requiresCoaching || !r.coachingDate) return false; // only 100% audits that were coached
-          const d = r.coachingDate instanceof Date ? r.coachingDate : new Date(r.coachingDate);
-          if (granularity === 'day') return isSameDay(d, start);
-          return d >= start && d <= end;
-        }).length;
-
-        return { date: label, count };
+        return { date: label, count: optionalTrendMap.get(label) || 0 };
       });
-
 
       return {
         summary,

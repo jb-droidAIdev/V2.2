@@ -225,72 +225,72 @@ export class UsersService {
     const allRoles = await this.prisma.userRole.findMany();
     const roleMap = new Map(allRoles.map((r) => [r.name, r.id]));
 
-    for (let i = 0; i < users.length; i += chunkSize) {
-      const userChunk = users.slice(i, i + chunkSize);
+    for (const u of users) {
+      const role = (u.role as Role) || Role.AGENT;
+      const billable =
+        u.billable === true ||
+        u.billable === 'true' ||
+        u.billable === 'Yes';
+      const roleId = roleMap.get(role);
 
-      await Promise.all(
-        userChunk.map(async (u) => {
-          const role = (u.role as Role) || Role.AGENT;
-          const billable =
-            u.billable === true ||
-            u.billable === 'true' ||
-            u.billable === 'Yes';
-          const roleId = roleMap.get(role);
+      // Robust lookup: Search by EID or Email (case-insensitive)
+      const existingUser = await this.findOne(u.eid || u.email);
 
-          // Robust lookup: Search by EID or Email (case-insensitive)
-          const existingUser = await this.findOne(u.eid || u.email);
+      const userData = {
+        name: u.name,
+        role: role,
+        billable: billable,
+        employeeTeam: u.employeeTeam,
+        projectCode: u.projectCode,
+        supervisor: u.supervisor,
+        manager: u.manager,
+        sdm: u.sdm,
+        systemId: u.systemId ? String(u.systemId).trim() : null,
+        isActive: true,
+      };
 
-          const userData = {
-            name: u.name,
-            role: role,
-            billable: billable,
-            employeeTeam: u.employeeTeam,
-            projectCode: u.projectCode,
-            supervisor: u.supervisor,
-            manager: u.manager,
-            sdm: u.sdm,
-            systemId: String(u.systemId || ''),
-            isActive: true,
-          };
-
-          if (existingUser) {
-            // UPDATE EXISTING: Never touch password or mustChangePassword
-            await this.prisma.user.update({
-              where: { id: existingUser.id },
-              data: {
-                ...userData,
-                // Ensure email stays consistent with file if provided
-                ...(u.email ? { email: u.email.toLowerCase().trim() } : {}),
-                // Ensure EID stays consistent with file if provided
-                ...(u.eid ? { eid: String(u.eid).trim() } : {}),
-                // Update dynamic role mapping
-                roleId: roleId,
-                role: role,
-              },
-            });
-          } else {
-            // CREATE NEW
-            const defaultPassStr = `Fws@${u.eid ? String(u.eid).trim() : '12345'}`;
-            const defaultPassword = await bcrypt.hash(defaultPassStr, 10);
-            await this.prisma.user.create({
-              data: {
-                ...userData,
-                email: u.email
-                  ? u.email.toLowerCase().trim()
-                  : u.eid
-                    ? `${u.eid.trim()}@flatworld.ph`
-                    : `user-${Math.random().toString(36).substring(7)}@placeholder.com`,
-                eid: u.eid ? String(u.eid).trim() : null,
-                password: defaultPassword,
-                mustChangePassword: true,
-                roleId: roleId,
-              },
-            });
-          }
-          processedCount++;
-        }),
-      );
+      try {
+        if (existingUser) {
+          // UPDATE EXISTING: Never touch password or mustChangePassword
+          await this.prisma.user.update({
+            where: { id: existingUser.id },
+            data: {
+              ...userData,
+              // Ensure email stays consistent with file if provided
+              ...(u.email ? { email: u.email.toLowerCase().trim() } : {}),
+              // Ensure EID stays consistent with file if provided
+              ...(u.eid ? { eid: String(u.eid).trim() } : {}),
+              // Update dynamic role mapping
+              roleId: roleId,
+              role: role,
+            },
+          });
+        } else {
+          // CREATE NEW
+          const defaultPassStr = `Fws@${u.eid ? String(u.eid).trim() : '12345'}`;
+          const defaultPassword = await bcrypt.hash(defaultPassStr, 10);
+          await this.prisma.user.create({
+            data: {
+              ...userData,
+              email: u.email
+                ? u.email.toLowerCase().trim()
+                : u.eid
+                  ? `${String(u.eid).trim()}@flatworld.ph`
+                  : `user-${Math.random().toString(36).substring(7)}@placeholder.com`,
+              eid: u.eid ? String(u.eid).trim() : null,
+              password: defaultPassword,
+              mustChangePassword: true,
+              roleId: roleId,
+            },
+          });
+        }
+        processedCount++;
+      } catch (err) {
+        console.error(`Failed to process user ${u.name || u.eid || u.email}:`, err);
+        // Continue to next user instead of failing the whole batch
+      }
     }
+
 
     // --- ATTRITION RECONCILIATION ---
     // Any AGENT who is currently active but NOT in the incoming file should be deactivated

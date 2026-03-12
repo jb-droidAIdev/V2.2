@@ -824,12 +824,19 @@ export class AuditService {
     return { status: 'saved', score: percent };
   }
 
-  async submit(id: string, auditorId: string) {
+  async submit(id: string, auditorId: string, data?: any) {
+    // 0. Optional: Sync final scores if provided in the submit request
+    if (data && (data.scores || data.fieldValues)) {
+      await this.autosave(id, auditorId, data);
+    }
+
     // 1. Fetch final state with ALL required relations for notification
     const audit = await this.prisma.audit.findUnique({
       where: { id },
       include: {
-        scores: true,
+        scores: {
+          include: { criterion: true },
+        },
         formVersion: {
           include: {
             criteria: true,
@@ -854,10 +861,8 @@ export class AuditService {
     }
 
     // 2. Data Integrity Validation WITH FRESHEST DATA
-    const dbScores = await this.prisma.auditScore.findMany({
-      where: { auditId: id },
-      include: { criterion: true },
-    });
+    const dbScores = audit.scores;
+    const relevantScores = dbScores; // Already filtered by FormVersion criteria in the include if we want, or just use as is
 
     // A. Completeness Check (Only count scores for parameters in this specific FormVersion)
     const validCriterionIds = new Set(
@@ -925,34 +930,55 @@ export class AuditService {
         isAutoFailed,
         lastActionAt: now,
       },
+      include: {
+        agent: true,
+        auditor: true,
+        campaign: true,
+        fieldValues: true,
+        formVersion: {
+          include: {
+            form: { select: { name: true } },
+          },
+        },
+      },
     });
 
-    // --- TRANSPARENT NOTIFICATION LOGIC ---
+    // Fire-and-forget background notifications
+    this.sendSubmissionNotifications(updatedAudit, percent, isAutoFailed).catch(
+      (err) => console.error('Background notification failed:', err),
+    );
+
+    return updatedAudit;
+  }
+
+  private async sendSubmissionNotifications(
+    audit: any,
+    percent: number,
+    isAutoFailed: boolean,
+  ) {
     try {
       const ccEmails: string[] = [];
+      const interactionDate =
+        audit.fieldValues.find((f: any) => f.fieldName === 'interactionDate')
+          ?.value || 'N/A';
 
-      // 1. Ops Hierarchy (Supervisor/Manager)
-      if (audit.agent.supervisor) {
-        const sup = await this.prisma.user.findFirst({
-          where: {
-            name: {
-              equals: audit.agent.supervisor.trim(),
-              mode: 'insensitive',
-            },
-          },
-          select: { email: true },
-        });
-        if (sup?.email) ccEmails.push(sup.email);
-      }
-      if (audit.agent.manager) {
-        const mgr = await this.prisma.user.findFirst({
-          where: {
-            name: { equals: audit.agent.manager.trim(), mode: 'insensitive' },
-          },
-          select: { email: true },
-        });
-        if (mgr?.email) ccEmails.push(mgr.email);
-      }
+      // Optimized Hierarchy Check: Single query for all potential CCs
+      const hierarchyNames = [
+        audit.agent.supervisor,
+        audit.agent.manager,
+      ]
+        .filter(Boolean)
+        .map((n) => n.trim());
+
+      const hierarchyUsers = await this.prisma.user.findMany({
+        where: {
+          name: { in: hierarchyNames, mode: 'insensitive' },
+          isActive: true,
+        },
+        select: { email: true, name: true },
+      });
+
+      hierarchyUsers.forEach((u) => u.email && ccEmails.push(u.email));
 
       // 2. QA Hierarchy (QA TL / Manager)
       const qaHierarchy = await this.prisma.user.findMany({
@@ -964,11 +990,7 @@ export class AuditService {
       });
       qaHierarchy.forEach((u) => u.email && ccEmails.push(u.email));
 
-      const interactionDate =
-        audit.fieldValues.find((f) => f.fieldName === 'interactionDate')
-          ?.value || 'N/A';
-
-      // 1. Send to Agent (No CC)
+      // 1. Send to Agent
       await this.mailService.sendNewAuditToAgent({
         to: audit.agent.email,
         agentName: audit.agent.name,
@@ -978,32 +1000,18 @@ export class AuditService {
         campaignName: audit.campaign?.name || audit.formVersion.form.name,
       });
 
-      // 2. Send to Ops TL (With Manager CC)
+      // 2. Send to Ops TL (Supervisor)
       if (audit.agent.supervisor) {
-        const sup = await this.prisma.user.findFirst({
-          where: {
-            name: {
-              equals: audit.agent.supervisor.trim(),
-              mode: 'insensitive',
-            },
-          },
-          select: { email: true },
-        });
+        const sup = hierarchyUsers.find(
+          (u) => u.name.toLowerCase() === audit.agent.supervisor.toLowerCase(),
+        );
 
         if (sup?.email) {
-          const managerEmails = [];
-          if (audit.agent.manager) {
-            const mgr = await this.prisma.user.findFirst({
-              where: {
-                name: {
-                  equals: audit.agent.manager.trim(),
-                  mode: 'insensitive',
-                },
-              },
-              select: { email: true },
-            });
-            if (mgr?.email) managerEmails.push(mgr.email);
-          }
+          const managerName = audit.agent.manager?.toLowerCase();
+          const managerEmails = hierarchyUsers
+            .filter((u) => u.name.toLowerCase() === managerName)
+            .map((u) => u.email)
+            .filter(Boolean) as string[];
 
           await this.mailService.sendNewAuditToOps({
             to: sup.email,
@@ -1020,10 +1028,8 @@ export class AuditService {
         }
       }
     } catch (mailError) {
-      console.warn('Post-submission email failed:', mailError);
+      console.warn('Post-submission background email failed:', mailError);
     }
-
-    return updatedAudit;
   }
 
   async acknowledgeAudit(id: string, agentId: string) {

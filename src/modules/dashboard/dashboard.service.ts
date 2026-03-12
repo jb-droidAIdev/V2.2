@@ -725,17 +725,14 @@ export class DashboardService {
       }
 
       // Build agent-where using AND to avoid invalid Prisma queries
-      const buildAgentWhere = (): any => {
+      const buildAgentWhere = (excludeFilters: string[] = []): any => {
         const conditions: any[] = [];
 
         if (allowedCampaignIds !== null) {
-          // Manager-restricted: scope by assigned campaign audits
           conditions.push({ auditsReceived: { some: { campaignId: { in: allowedCampaignIds } } } });
         } else if (!isStaff) {
-          // Agents only see themselves
           conditions.push({ id: user.id });
-        } else if (activeCampaigns.length > 0) {
-          // Staff with explicit campaign filter: OR between real IDs and team names
+        } else if (activeCampaigns.length > 0 && !excludeFilters.includes('campaignId')) {
           const teamNames = activeCampaigns.filter(id => id.startsWith('TEAM:')).map(id => id.replace('TEAM:', ''));
           const realIds = activeCampaigns.filter(id => !id.startsWith('TEAM:'));
           const campaignOr: any[] = [];
@@ -744,44 +741,47 @@ export class DashboardService {
           if (campaignOr.length === 1) conditions.push(campaignOr[0]);
           else if (campaignOr.length > 1) conditions.push({ OR: campaignOr });
         } else {
-          // No restrictions — only agents with at least one audit
           conditions.push({ auditsReceived: { some: {} } });
         }
 
-        if (activeSupervisors.length > 0) conditions.push({ supervisor: { in: activeSupervisors } });
-        if (activeSdms.length > 0) conditions.push({ sdm: { in: activeSdms } });
+        if (activeSupervisors.length > 0 && !excludeFilters.includes('supervisor')) {
+          conditions.push({ supervisor: { in: activeSupervisors } });
+        }
+        if (activeSdms.length > 0 && !excludeFilters.includes('sdm')) {
+          conditions.push({ sdm: { in: activeSdms } });
+        }
 
         if (conditions.length === 0) return {};
         if (conditions.length === 1) return conditions[0];
         return { AND: conditions };
       };
 
-      const agentBaseWhere = buildAgentWhere();
+      // For cross-filtering other dropdowns (Campaigns and QAs), we need to know what agents match
+      // even IF we haven't selected a campaign yet.
+      const agentMatchWhere = buildAgentWhere();
 
-      // Campaign list for filter dropdown (not cascaded — show full allowed set)
-      const campaignFilter: any = { type: 'USER', audits: { some: {} } };
+      // 1. Campaigns: Show campaigns that have audits for the currently matching agents
+      const campaignFilter: any = { type: 'USER' };
       if (isManagerRestricted) {
-        campaignFilter.qaAssignments = { some: { userId: user.id, isActive: true } };
+        campaignFilter.id = { in: allowedCampaignIds! };
       } else if (!isStaff) {
-        campaignFilter.id = 'NON_EXISTENT';
+        campaignFilter.audits = { some: { agentId: user.id } };
+      } else {
+        // Staff/Admin: Filter campaigns by the agents that match other filters (Supervisor/SDM)
+        campaignFilter.audits = { some: { agent: agentMatchWhere } };
       }
 
-      // Employee teams (for implicit campaigns)
-      const teamWhere: any =
-        allowedCampaignIds !== null
-          ? { auditsReceived: { some: { campaignId: { in: allowedCampaignIds } } } }
-          : !isStaff
-          ? { id: user.id }
-          : { auditsReceived: { some: {} } };
+      // 2. QA Auditors: Show QAs who have performed audits for the currently matching agents/campaigns
+      const qaFilter: any = {
+        role: { in: [Role.QA, Role.QA_TL] as any },
+        auditsConducted: { some: { agent: agentMatchWhere } }
+      };
+      
+      // Specifically allow current selection to be visible for QAs if needed
+      // (Simplified: just filter by everything active)
 
-      // QA Auditors: cascade on campaign if selected
-      const qaFilter: any = { role: { in: [Role.QA, Role.QA_TL] as any } };
-      const realSelectedIds = activeCampaigns.filter(id => !id.startsWith('TEAM:'));
-      if (allowedCampaignIds !== null) {
-        qaFilter.auditsConducted = { some: { campaignId: { in: allowedCampaignIds } } };
-      } else if (realSelectedIds.length > 0) {
-        qaFilter.auditsConducted = { some: { campaignId: { in: realSelectedIds } } };
-      }
+      // 3. Employee teams (Cascaded)
+      const teamWhere = { ...agentMatchWhere };
 
       const [campaigns, supervisorsRaw, sdmsRaw, auditedAgents, userTeams, qas] = await Promise.all([
         this.prisma.campaign.findMany({
@@ -790,17 +790,17 @@ export class DashboardService {
           orderBy: { name: 'asc' },
         }),
         this.prisma.user.findMany({
-          where: { supervisor: { not: null }, ...agentBaseWhere },
+          where: { supervisor: { not: null }, ...buildAgentWhere(['supervisor']) },
           select: { supervisor: true },
           distinct: ['supervisor'],
         }),
         this.prisma.user.findMany({
-          where: { sdm: { not: null }, ...agentBaseWhere },
+          where: { sdm: { not: null }, ...buildAgentWhere(['sdm']) },
           select: { sdm: true },
           distinct: ['sdm'],
         }),
         this.prisma.user.findMany({
-          where: { role: 'AGENT' as any, ...agentBaseWhere },
+          where: { role: 'AGENT' as any, ...agentMatchWhere },
           select: { id: true, name: true },
           orderBy: { name: 'asc' },
         }),

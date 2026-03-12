@@ -192,4 +192,29 @@ export class AuthService {
       message: 'Your password has been successfully reset. You can now log in.',
     };
   }
+
+  async verifyResetToken(token: string): Promise<{ valid: boolean }> {
+    const decoded = this.jwtService.decode(token);
+    if (!decoded || !decoded.sub || decoded.type !== 'reset') {
+      throw new UnauthorizedException('Invalid or malformed reset token.');
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: decoded.sub },
+    });
+    if (!user) {
+      throw new NotFoundException('User no longer exists.');
+    }
+
+    try {
+      this.jwtService.verify(token, {
+        secret: jwtConstants.secret + user.password,
+      });
+      return { valid: true };
+    } catch (e) {
+      throw new UnauthorizedException(
+        'Reset link has expired or has already been used.',
+      );
+    }
+  }
 }

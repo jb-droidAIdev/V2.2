@@ -71,4 +71,12 @@ export class AuthController {
     }
     return this.authService.resetPassword(body.token, body.newPassword);
   }
+
+  @Post('verify-reset-token')
+  async verifyResetToken(@Body() body: { token: string }) {
+    if (!body.token) {
+      throw new BadRequestException('Token is required');
+    }
+    return this.authService.verifyResetToken(body.token);
+  }
 }

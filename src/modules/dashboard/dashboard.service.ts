@@ -1004,16 +1004,18 @@ export class DashboardService {
       });
 
       const agentCoverage = Array.from(agentMap.values()).map(a => {
+        const denom = a.completed + a.pending + a.overdue;
         return {
           ...a,
-          complianceRate: a.total > 0 ? ((a.completed + a.pending) / a.total) * 100 : 100
+          complianceRate: denom > 0 ? (a.completed / denom) * 100 : 100
         };
       }).sort((a, b) => b.overdue - a.overdue);
 
       const supervisorAccountability = Array.from(supervisorMap.values()).map(s => {
+        const denom = s.completed + s.pending + s.overdue;
         return {
           ...s,
-          compliance: s.total > 0 ? ((s.completed + s.pending) / s.total) * 100 : 100
+          compliance: denom > 0 ? (s.completed / denom) * 100 : 100
         };
       }).sort((a, b) => a.compliance - b.compliance);
 

@@ -743,7 +743,7 @@ export class DashboardService {
         
         // If they selected a campaign they don't have access to (or it's empty)
         if (activeCampaigns.length > 0 && campaignIdsToUse.length === 0) {
-          visibilityFilter.auditsReceived = { some: { campaignId: undefined } }; // Force empty
+          visibilityFilter.auditsReceived = { some: { campaignId: { in: [] } } }; // Force empty cleanly
         } else {
           visibilityFilter.auditsReceived = { some: { campaignId: { in: campaignIdsToUse } } };
         }
@@ -778,7 +778,7 @@ export class DashboardService {
       } else if (!isStaff) {
         campaignFilter.OR = [
           { qaAssignments: { some: { userId: user.id } } },
-          { name: user.employeeTeam },
+          { name: user.employeeTeam || 'NON_EXISTENT' }, // Protect from undefined throwing 500
         ];
       }
 
@@ -812,7 +812,7 @@ export class DashboardService {
       const userTeams = await this.prisma.user.findMany({
         where: {
           auditsReceived: visibilityFilter.auditsReceived || { some: {} },
-          ...(!isStaff ? { employeeTeam: user.employeeTeam } : {}),
+          ...(!isStaff ? { employeeTeam: user.employeeTeam || 'NON_EXISTENT' } : {}), // Protect from undefined
         },
         select: { employeeTeam: true },
         distinct: ['employeeTeam'],

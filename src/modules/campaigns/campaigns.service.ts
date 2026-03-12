@@ -299,123 +299,24 @@ export class CampaignsService {
 
   async remove(id: string) {
     return this.prisma.$transaction(async (tx) => {
-      // 1. Delete Assignments
-      await tx.campaignQA.deleteMany({ where: { campaignId: id } });
-
-      // 2. Identify forms to clean up audits that might reference them (even from other campaigns)
-      const formVersions = await tx.monitoringFormVersion.findMany({
-        where: { form: { campaignId: id } },
-        select: { id: true },
-      });
-      const formVersionIds = formVersions.map((fv) => fv.id);
-
-      // 2b. Identify all audits for this campaign OR using this campaign's forms
-      const audits = await tx.audit.findMany({
-        where: {
-          OR: [{ campaignId: id }, { formVersionId: { in: formVersionIds } }],
-        },
-        select: { id: true },
-      });
-      const auditIds = audits.map((a) => a.id);
-
-      if (auditIds.length > 0) {
-        await tx.auditFieldValue.deleteMany({
-          where: { auditId: { in: auditIds } },
-        });
-        await tx.auditScore.deleteMany({
-          where: { auditId: { in: auditIds } },
-        });
-        await tx.auditEvent.deleteMany({
-          where: { auditId: { in: auditIds } },
-        });
-        await tx.auditUserView.deleteMany({
-          where: { auditId: { in: auditIds } },
-        });
-        await tx.releaseRecord.deleteMany({
-          where: { auditId: { in: auditIds } },
-        });
-        await tx.coachingLog.deleteMany({
-          where: { auditId: { in: auditIds } },
-        });
-
-        // Calibration entries tied to audits
-        await tx.calibrationAnchor.deleteMany({
-          where: { auditId: { in: auditIds } },
-        });
-        await tx.calibrationTicket.deleteMany({
-          where: { auditId: { in: auditIds } },
-        });
-
-        // Disputes
-        const disputes = await tx.dispute.findMany({
-          where: { auditId: { in: auditIds } },
-          select: { id: true },
-        });
-        const disputeIds = disputes.map((d) => d.id);
-        if (disputeIds.length > 0) {
-          await tx.disputeItem.deleteMany({
-            where: { disputeId: { in: disputeIds } },
-          });
-          await tx.dispute.deleteMany({ where: { id: { in: disputeIds } } });
-        }
-
-        await tx.audit.deleteMany({ where: { id: { in: auditIds } } });
-      }
-
-      // 3. Delete Sampling Runs & Sampled Tickets
-      const runs = await tx.samplingRun.findMany({
+      // 1. Archive all forms associated with this campaign
+      // This ensures scorecards can no longer be used for new audits
+      await tx.monitoringForm.updateMany({
         where: { campaignId: id },
-        select: { id: true },
+        data: { isArchived: true },
       });
-      const runIds = runs.map((r) => r.id);
-      if (runIds.length > 0) {
-        await tx.sampledTicket.deleteMany({ where: { runId: { in: runIds } } });
-        await tx.samplingRun.deleteMany({ where: { id: { in: runIds } } });
-      }
 
-      // 4. Delete Calibration Sessions
-      // (This will cascade to scores, participants, results, etc. due to schema onDelete: Cascade)
-      await tx.calibrationSession.deleteMany({ where: { campaignId: id } });
-
-      // 5. Delete Tickets & Batches (Robust check for tickets in batches)
-      const batches = await tx.ticketUploadBatch.findMany({
+      // 2. Remove QA Assignments to revoke access immediately
+      await tx.campaignQA.deleteMany({
         where: { campaignId: id },
-        select: { id: true },
       });
-      const batchIds = batches.map((b) => b.id);
 
-      await tx.uploadedTicket.deleteMany({
-        where: {
-          OR: [{ campaignId: id }, { batchId: { in: batchIds } }],
-        },
+      // 3. Perform Soft-Delete on the campaign
+      // Data (Audits, Coaching Logs, Tickets) is RETAINED for historical reporting
+      return tx.campaign.update({
+        where: { id },
+        data: { isActive: false },
       });
-      await tx.ticketUploadBatch.deleteMany({ where: { campaignId: id } });
-
-      // 6. Delete Forms (and versions)
-      const forms = await tx.monitoringForm.findMany({
-        where: { campaignId: id },
-        select: { id: true },
-      });
-      const formIds = forms.map((f) => f.id);
-      if (formIds.length > 0) {
-        const versions = await tx.monitoringFormVersion.findMany({
-          where: { formId: { in: formIds } },
-          select: { id: true },
-        });
-        const versionIds = versions.map((v) => v.id);
-        if (versionIds.length > 0) {
-          await tx.formCriterion.deleteMany({
-            where: { formVersionId: { in: versionIds } },
-          });
-          await tx.monitoringFormVersion.deleteMany({
-            where: { id: { in: versionIds } },
-          });
-        }
-        await tx.monitoringForm.deleteMany({ where: { id: { in: formIds } } });
-      }
-
-      // 7. Delete Campaign
-      return tx.campaign.delete({ where: { id } });
     });
   }
 

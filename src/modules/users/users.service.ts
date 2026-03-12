@@ -362,18 +362,20 @@ export class UsersService {
 
   async remove(id: string) {
     return this.prisma.$transaction(async (tx) => {
-      // 1. Cleanup metadata and assignments
+      // 1. Cleanup metadata and assignments to prevent accidental access
       await tx.campaignQA.deleteMany({ where: { userId: id } });
       await tx.userPermission.deleteMany({ where: { userId: id } });
-      await tx.notification.deleteMany({ where: { userId: id } });
       
-      // 2. Cleanup calibration participation
-      await tx.calibrationResult.deleteMany({ where: { userId: id } });
-      await tx.calibrationParticipant.deleteMany({ where: { userId: id } });
-
-      // 3. Final deletion
-      return tx.user.delete({
+      // 2. Perform Soft-Delete (Deactivation)
+      // Historical data (Audits, Coaching Logs) is RETAINED for reporting
+      return tx.user.update({
         where: { id },
+        data: { 
+          isActive: false,
+          roleId: null,
+          role: 'INACTIVE', // Clear role to prevent RBAC login
+          employeeTeam: 'Unassigned'
+        },
       });
     });
   }

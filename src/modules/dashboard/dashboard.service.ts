@@ -34,7 +34,6 @@ export class DashboardService {
       campaignId?: string | string[];
       supervisor?: string | string[];
       sdm?: string | string[];
-      manager?: string | string[];
       auditorId?: string | string[];
       granularity?: 'day' | 'week' | 'month';
     },
@@ -165,9 +164,6 @@ export class DashboardService {
       const sdms = this.normalizeArray(filters.sdm);
       if (sdms.length > 0) where.agent.sdm = { in: sdms };
 
-      const managers = this.normalizeArray(filters.manager);
-      if (managers.length > 0) where.agent.manager = { in: managers };
-
       // 7. Ticket ID Search (External or Reference)
       if (filters.ticketId) {
         const ticketCondition = {
@@ -229,8 +225,6 @@ export class DashboardService {
 
       // Clean up empty objects to help Prisma optimizer
       if (Object.keys(where.agent).length === 0) delete where.agent;
-
-      console.log(`[DASHBOARD] getStats Final Where:`, JSON.stringify(where, null, 2));
 
       // Execute queries
       const audits = await this.prisma.audit.findMany({
@@ -721,7 +715,6 @@ export class DashboardService {
             sdms: [],
             agents: [],
             qas: [],
-            managers: [],
           };
         }
 
@@ -767,16 +760,6 @@ export class DashboardService {
         },
         select: { sdm: true },
         distinct: ['sdm'],
-      });
-
-      // Managers
-      const managersRaw = await this.prisma.user.findMany({
-        where: {
-          manager: { not: null },
-          ...(!isStaff || isManagerRestricted ? visibilityFilter : {}),
-        },
-        select: { manager: true },
-        distinct: ['manager'],
       });
 
       // Teams (Employee Teams)
@@ -829,10 +812,6 @@ export class DashboardService {
           .sort(),
         sdms: sdmsRaw
           .map((s) => s.sdm)
-          .filter(Boolean)
-          .sort(),
-        managers: managersRaw
-          .map((m) => m.manager)
           .filter(Boolean)
           .sort(),
         agents: auditedAgents,
@@ -901,17 +880,15 @@ export class DashboardService {
 
       const agentIds = this.normalizeArray(filters.agentId);
       const supervisors = this.normalizeArray(filters.supervisor);
-      const managers = this.normalizeArray(filters.manager);
-
-      if (agentIds.length > 0 || supervisors.length > 0 || managers.length > 0) {
+ 
+      if (agentIds.length > 0 || supervisors.length > 0) {
         where.agent = {
           ...(agentIds.length > 0 ? { id: { in: agentIds } } : {}),
           ...(supervisors.length > 0 ? { supervisor: { in: supervisors } } : {}),
-          ...(managers.length > 0 ? { manager: { in: managers } } : {}),
         };
       }
 
-      console.log(`[DASHBOARD] getCoachingStats Final Where:`, JSON.stringify(where, null, 2));
+
 
       const audits = await this.prisma.audit.findMany({
         where,
@@ -967,7 +944,6 @@ export class DashboardService {
             deadline,
             ticketReference: audit.ticketReference,
             score: audit.score,
-            manager: audit.agent.manager || 'N/A',
             requiresCoaching,
           };
         } catch (e) {
@@ -1227,7 +1203,6 @@ export class DashboardService {
       mandatoryActivityTrend: [],
       optionalActivityTrend: [],
       activityTrend: [],
-      managers: [],
     };
   }
 
@@ -1245,7 +1220,6 @@ export class DashboardService {
       policyProgress: [],
       activeProgressions: [],
       failedAudits: [],
-      managers: [],
     };
   }
 }

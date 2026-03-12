@@ -862,7 +862,6 @@ export class AuditService {
 
     // 2. Data Integrity Validation WITH FRESHEST DATA
     const dbScores = audit.scores;
-    const relevantScores = dbScores; // Already filtered by FormVersion criteria in the include if we want, or just use as is
 
     // A. Completeness Check (Only count scores for parameters in this specific FormVersion)
     const validCriterionIds = new Set(

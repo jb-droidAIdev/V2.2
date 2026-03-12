@@ -510,7 +510,9 @@ export class CampaignsService {
         );
       }
     } catch (err) {
-      console.error('syncTeamsWithCampaigns error:', err);
+      console.error('CRITICAL: syncTeamsWithCampaigns error:', err);
+      // Log more details if it's a Prisma error
+      if (err.code) console.error(`Prisma Error Code: ${err.code} | Message: ${err.message}`);
     }
   }
 }

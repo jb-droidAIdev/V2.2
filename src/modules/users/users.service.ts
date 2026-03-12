@@ -87,7 +87,9 @@ export class UsersService {
           where: { userId: user.id },
           include: { campaign: true },
         });
-        const campaignNames = assignments.map((a) => a.campaign.name);
+        const campaignNames = assignments
+          .filter((a) => a.campaign)
+          .map((a) => a.campaign.name);
 
         const managementRoles = [
           'ADMIN',
@@ -142,7 +144,9 @@ export class UsersService {
       }
 
       const results = await this.prisma.user.findMany(queryOptions);
-      const total = await this.prisma.user.count({ where });
+      
+      // Separate query for total count using the EXACT same where filter
+      const total = await this.prisma.user.count({ where: queryOptions.where });
 
       return options?.limit ? { data: results, total } : results;
     } catch (error) {

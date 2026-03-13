@@ -20,7 +20,12 @@ import { CreateCoachingLogDto } from './dto/coaching-log.dto';
 export class CoachingLogController {
   constructor(private readonly coachingLogService: CoachingLogService) {}
 
-  @Permissions(Permission.AUDIT_COACH, Permission.COACHING_LOG_READ)
+  @Permissions(
+    Permission.AUDIT_COACH,
+    Permission.COACHING_LOG_READ,
+    Permission.AUDIT_ACKNOWLEDGE,
+    Permission.AUDIT_VIEW_OWN
+  )
   @Get(':auditId')
   findByAuditId(@Param('auditId') auditId: string) {
     return this.coachingLogService.findByAuditId(auditId);

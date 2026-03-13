@@ -21,15 +21,20 @@ export class AuthController {
 
   @Post('login')
   async login(@Body() body: any) {
-    console.log('[AUTH] Login Body:', body);
-    if (!body) {
-      throw new BadRequestException('Empty or malformed request body');
+    try {
+      console.log('[AUTH] Login Body:', body?.email);
+      if (!body || !body.email) {
+        throw new BadRequestException('Email is required');
+      }
+      const user = await this.authService.validateUser(body.email, body.password);
+      if (!user) {
+        throw new UnauthorizedException('Invalid credentials');
+      }
+      return this.authService.login(user);
+    } catch (error) {
+      console.error('[AUTH] Login Controller Error:', error);
+      throw error;
     }
-    const user = await this.authService.validateUser(body.email, body.password);
-    if (!user) {
-      throw new UnauthorizedException();
-    }
-    return this.authService.login(user);
   }
 
   @UseGuards(AuthGuard('jwt'))

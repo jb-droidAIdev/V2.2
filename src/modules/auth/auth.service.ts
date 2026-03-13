@@ -21,79 +21,101 @@ export class AuthService {
   ) {}
 
   async validateUser(email: string, pass: string): Promise<any> {
-    console.log(`[AUTH] Login attempt: ${email}`);
-    const user = (await this.usersService.findOne(email)) as any;
-    if (!user) {
-      console.log(`[AUTH] User not found: ${email}`);
+    try {
+      console.log(`[AUTH] Login attempt: ${email}`);
+      const user = (await this.usersService.findOne(email)) as any;
+      if (!user) {
+        console.log(`[AUTH] User not found: ${email}`);
+        return null;
+      }
+
+      // 1. Brute-force protection: Check if locked out
+      if (user.lockoutUntil) {
+        const lockoutDate = new Date(user.lockoutUntil);
+        if (!isNaN(lockoutDate.getTime()) && new Date() < lockoutDate) {
+          throw new ForbiddenException(
+            `Account is locked until ${lockoutDate.toLocaleTimeString()}. Too many failed attempts.`,
+          );
+        }
+      }
+
+      if (user.password) {
+        let isMatch = false;
+        try {
+          // 2. Standard comparison: Bcrypt
+          isMatch = await bcrypt.compare(pass, user.password);
+        } catch (e) {
+          // Not a bcrypt hash?
+          isMatch = false;
+        }
+
+        // 3. Legacy Fallback: Plain-text check (only if bcrypt fails)
+        if (!isMatch && pass === user.password) {
+          // Successful plain-text login? Auto-upgrade to bcrypt
+          await this.usersService.updatePassword(user.id, pass);
+          isMatch = true;
+        }
+
+        if (isMatch) {
+          // 4. Success: Reset tracking
+          await this.usersService.updateLoginMetadata(user.id, {
+            failedLoginAttempts: 0,
+            lockoutUntil: null,
+            lastLoginAt: new Date(),
+          });
+
+          const { password, userRole, customPermissions, ...userData } = user;
+
+          // Flatten permissions safely (defensive check for missing permission objects)
+          const rolePerms =
+            userRole?.permissions
+              ?.map((p: any) => p?.permission?.code)
+              ?.filter(Boolean) || [];
+          const userPerms =
+            customPermissions
+              ?.map((p: any) => p?.permission?.code)
+              ?.filter(Boolean) || [];
+          const allPerms = Array.from(new Set([...rolePerms, ...userPerms]));
+
+          console.log(`[AUTH] User validated: ${email} | Role: ${userData.role} | Perms: ${allPerms.length}`);
+
+          return {
+            ...userData,
+            permissions: allPerms,
+          };
+        }
+      }
+
+      // 5. Failure: Update failed attempts
+      const failedAttempts = (user.failedLoginAttempts || 0) + 1;
+      const lockoutUntil =
+        failedAttempts >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null; // 15 min lockout after 5 attempts
+
+      await this.usersService.updateLoginMetadata(user.id, {
+        failedLoginAttempts: failedAttempts,
+        lockoutUntil,
+      });
+
       return null;
+    } catch (error) {
+      console.error('[AUTH] validateUser CRITICAL ERROR:', error);
+      throw error;
     }
-
-    // 1. Brute-force protection: Check if locked out
-    if (user.lockoutUntil && new Date() < new Date(user.lockoutUntil)) {
-      throw new ForbiddenException(
-        `Account is locked until ${user.lockoutUntil.toLocaleTimeString()}. Too many failed attempts.`,
-      );
-    }
-
-    if (user.password) {
-      let isMatch = false;
-      try {
-        // 2. Standard comparison: Bcrypt
-        isMatch = await bcrypt.compare(pass, user.password);
-      } catch (e) {
-        // Not a bcrypt hash?
-        isMatch = false;
-      }
-
-      // 3. Legacy Fallback: Plain-text check (only if bcrypt fails)
-      if (!isMatch && pass === user.password) {
-        // Successful plain-text login? Auto-upgrade to bcrypt
-        await this.usersService.updatePassword(user.id, pass);
-        isMatch = true;
-      }
-
-      if (isMatch) {
-        // 4. Success: Reset tracking
-        await this.usersService.updateLoginMetadata(user.id, {
-          failedLoginAttempts: 0,
-          lockoutUntil: null,
-          lastLoginAt: new Date(),
-        });
-
-        const { password, userRole, customPermissions, ...userData } = user;
-
-        // Flatten permissions
-        const rolePerms =
-          userRole?.permissions?.map((p: any) => p.permission.code) || [];
-        const userPerms =
-          customPermissions?.map((p: any) => p.permission.code) || [];
-        const allPerms = Array.from(new Set([...rolePerms, ...userPerms]));
-
-        return {
-          ...userData,
-          permissions: allPerms,
-        };
-      }
-    }
-
-    // 5. Failure: Update failed attempts
-    const failedAttempts = user.failedLoginAttempts + 1;
-    const lockoutUntil =
-      failedAttempts >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null; // 15 min lockout after 5 attempts
-
-    await this.usersService.updateLoginMetadata(user.id, {
-      failedLoginAttempts: failedAttempts,
-      lockoutUntil,
-    });
-
-    return null;
   }
 
   async login(user: any) {
-    const payload = { username: user.email, sub: user.id, role: user.role };
+    const payload = { 
+      username: user.email, 
+      sub: user.id, 
+      role: user.roleName || user.role 
+    };
+    
+    // Return sanitized user object to avoid circular refs or massive payloads
+    const { password, userRole, customPermissions, ...safeUser } = user;
+    
     return {
       access_token: this.jwtService.sign(payload),
-      user: user,
+      user: safeUser,
     };
   }
 

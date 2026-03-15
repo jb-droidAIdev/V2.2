@@ -8,7 +8,7 @@ import { PrismaService } from '../../prisma.service';
 import { AuditStatus, Role } from '@prisma/client';
 import { MailService } from '../mail/mail.service';
 import { SlaEngineService } from '../sla-engine/sla-engine.service';
-import { subDays } from 'date-fns';
+import { subDays, endOfDay } from 'date-fns';
 
 @Injectable()
 export class AuditService {
@@ -26,7 +26,7 @@ export class AuditService {
       },
       include: {
         formVersion: {
-          include: { criteria: true },
+          include: { criteria: { where: { isActive: true }, orderBy: { orderIndex: 'asc' } } },
         },
         fieldValues: true,
         scores: true,
@@ -133,7 +133,7 @@ export class AuditService {
           select: { name: true, eid: true, role: true },
         },
         campaign: {
-          select: { name: true, projectCode: true },
+          select: { name: true, projectCode: true, coachingAckWindowDays: true, coachingReleaseWindowDays: true },
         },
         formVersion: {
           include: {
@@ -164,12 +164,31 @@ export class AuditService {
     const audits = await this.prisma.audit.findMany(queryOptions);
     const total = await this.prisma.audit.count({ where });
 
-    const data = (audits as any[]).map((audit) => {
+    const data = await Promise.all((audits as any[]).map(async (audit) => {
       const lastView = audit.userViews?.[0];
       const isUnread =
         !lastView || new Date(lastView.viewedAt) < new Date(audit.lastActionAt);
-      return { ...audit, isUnread };
-    });
+      
+      let ackDeadline = null;
+      let releaseDeadline = null;
+
+      // 1. Release SLA (Audit Submission -> Coaching Log Release)
+      const releaseSlaDays = audit.campaign?.coachingReleaseWindowDays ?? 3;
+      const releaseBasis = audit.submittedAt || audit.startedAt;
+      if (releaseBasis) {
+        const rDeadlineDate = await this.slaEngine.calculateDueDate(new Date(releaseBasis), releaseSlaDays, audit.campaignId);
+        releaseDeadline = endOfDay(rDeadlineDate);
+      }
+
+      // 2. Acknowledgment SLA (Coaching Log Release -> Agent Ack)
+      if (audit.coachingLog?.releasedAt) {
+        const ackSlaDays = audit.campaign?.coachingAckWindowDays ?? 2;
+        const ackDeadlineDate = await this.slaEngine.calculateDueDate(new Date(audit.coachingLog.releasedAt), ackSlaDays, audit.campaignId);
+        ackDeadline = endOfDay(ackDeadlineDate);
+      }
+
+      return { ...audit, isUnread, ackDeadline, releaseDeadline };
+    }));
 
     return options?.limit ? { data, total } : data;
   }
@@ -362,12 +381,29 @@ export class AuditService {
   /**
    * Create a manual audit for Evaluate page
    */
-  async createManualAudit(data: {
-    campaignId: string;
+   async createManualAudit(data: {
+    campaignId: string; // Param may be an actual Campaign ID or a Form ID
     agentId: string;
     auditorId: string;
     ticketReference?: string;
   }) {
+    // 0. Identity Resolution (Support passing Form ID where Campaign ID is expected)
+    let realCampaignId = data.campaignId;
+    let explicitFormId: string | null = null;
+
+    const possibleForm = await this.prisma.monitoringForm.findUnique({
+      where: { id: data.campaignId },
+      select: { id: true, campaignId: true },
+    });
+
+    if (possibleForm) {
+      explicitFormId = possibleForm.id;
+      // Use the linked campaign if it exists, otherwise keep the original (could be team-name based)
+      if (possibleForm.campaignId) {
+        realCampaignId = possibleForm.campaignId;
+      }
+    }
+
     const sanitizedReference = data.ticketReference?.trim();
 
     // 1. Global Duplicate Check (Must run first)
@@ -376,7 +412,7 @@ export class AuditService {
         where: {
           ticketReference: { equals: sanitizedReference, mode: 'insensitive' },
         },
-        include: { campaign: true },
+        include: { campaign: true, formVersion: true },
       });
 
       if (conflict) {
@@ -399,12 +435,12 @@ export class AuditService {
         if (
           conflict.auditorId === data.auditorId &&
           conflict.status === AuditStatus.IN_PROGRESS &&
-          conflict.campaignId === data.campaignId
+          (conflict.campaignId === realCampaignId || (explicitFormId && conflict.formVersion.formId === explicitFormId))
         ) {
           return this.prisma.audit.findUnique({
             where: { id: conflict.id },
             include: {
-              formVersion: { include: { criteria: true } },
+              formVersion: { include: { criteria: { where: { isActive: true } }, form: true } },
               agent: {
                 select: {
                   id: true,
@@ -436,7 +472,7 @@ export class AuditService {
       },
       include: {
         formVersion: {
-          include: { criteria: true },
+          include: { criteria: { where: { isActive: true }, orderBy: { orderIndex: 'asc' } } },
         },
         agent: {
           select: {
@@ -456,9 +492,10 @@ export class AuditService {
     if (existingAudit) {
       // If it matches exactly (Agent + Ticket + Campaign), just return it
       if (
-        existingAudit.campaignId === data.campaignId &&
+        existingAudit.campaignId === realCampaignId &&
         existingAudit.agentId === data.agentId &&
-        existingAudit.ticketReference === sanitizedReference
+        existingAudit.ticketReference === sanitizedReference &&
+        (!explicitFormId || existingAudit.formVersion.formId === explicitFormId)
       ) {
         return existingAudit;
       }
@@ -474,17 +511,19 @@ export class AuditService {
       if (scoreCount === 0 && fieldCount === 0) {
         // Robust lookup for the active form version of the new target campaign
         const targetCampaign = await this.prisma.campaign.findUnique({
-          where: { id: data.campaignId },
+          where: { id: realCampaignId },
         });
 
         const activeForm = await this.prisma.monitoringForm.findFirst({
-          where: {
-            OR: [
-              { campaignId: data.campaignId },
-              { teamName: targetCampaign?.name, campaignId: null },
-            ],
-            isArchived: false,
-          },
+          where: explicitFormId 
+            ? { id: explicitFormId, isArchived: false }
+            : {
+                OR: [
+                  { campaignId: realCampaignId },
+                  ...(targetCampaign?.name ? [{ teamName: targetCampaign.name, campaignId: null }] : []),
+                ],
+                isArchived: false,
+              },
           include: {
             versions: { where: { isActive: true }, take: 1 },
           },
@@ -496,13 +535,13 @@ export class AuditService {
           return await this.prisma.audit.update({
             where: { id: existingAudit.id },
             data: {
-              campaignId: data.campaignId,
+              campaignId: realCampaignId,
               agentId: data.agentId,
               formVersionId: newFormVersionId,
               ticketReference: sanitizedReference,
             },
             include: {
-              formVersion: { include: { criteria: true } },
+              formVersion: { include: { criteria: { where: { isActive: true }, orderBy: { orderIndex: 'asc' } } } },
               agent: {
                 select: {
                   id: true,
@@ -531,17 +570,19 @@ export class AuditService {
 
     // 3. Get the active form for this campaign (using robust lookup)
     const campaign = await this.prisma.campaign.findUnique({
-      where: { id: data.campaignId },
+      where: { id: realCampaignId },
     });
 
     const activeForm = await this.prisma.monitoringForm.findFirst({
-      where: {
-        OR: [
-          { campaignId: data.campaignId },
-          { teamName: campaign?.name, campaignId: null },
-        ],
-        isArchived: false,
-      },
+      where: explicitFormId 
+        ? { id: explicitFormId, isArchived: false }
+        : {
+            OR: [
+              { campaignId: realCampaignId },
+              ...(campaign?.name ? [{ teamName: campaign.name, campaignId: null }] : []),
+            ],
+            isArchived: false,
+          },
       include: {
         versions: {
           where: { isActive: true },
@@ -561,7 +602,7 @@ export class AuditService {
     // 3. Create the manual audit
     return await this.prisma.audit.create({
       data: {
-        campaignId: data.campaignId,
+        campaignId: realCampaignId,
         formVersionId,
         auditorId: data.auditorId,
         agentId: data.agentId,
@@ -570,7 +611,7 @@ export class AuditService {
       },
       include: {
         formVersion: {
-          include: { criteria: true },
+          include: { criteria: { where: { isActive: true }, orderBy: { orderIndex: 'asc' } } },
         },
         agent: {
           select: {
@@ -592,7 +633,7 @@ export class AuditService {
       where: { id },
       include: {
         formVersion: {
-          include: { criteria: true },
+          include: { criteria: { where: { isActive: true }, orderBy: { orderIndex: 'asc' } } },
         },
         fieldValues: true,
         scores: {
@@ -611,7 +652,9 @@ export class AuditService {
             projectCode: true,
             ztpWindowDays: true,
             ztpMilestones: true,
-            ztpAckSlaHours: true
+            ztpAckSlaHours: true,
+            coachingAckWindowDays: true,
+            coachingReleaseWindowDays: true
           },
         },
         sampledTicket: {
@@ -718,7 +761,25 @@ export class AuditService {
       };
     });
 
-    return { ...audit, scores: enrichedScores };
+    let ackDeadline = null;
+    let releaseDeadline = null;
+
+    // 1. Release SLA
+    const releaseSlaDays = (audit.campaign as any)?.coachingReleaseWindowDays ?? 3;
+    const releaseBasis = audit.submittedAt || audit.startedAt;
+    if (releaseBasis) {
+      const rDeadlineDate = await this.slaEngine.calculateDueDate(new Date(releaseBasis), releaseSlaDays, audit.campaignId);
+      releaseDeadline = endOfDay(rDeadlineDate);
+    }
+
+    // 2. Acknowledgment SLA
+    if (audit.coachingLog?.releasedAt) {
+      const ackSlaDays = (audit.campaign as any)?.coachingAckWindowDays ?? 2;
+      const ackDeadlineDate = await this.slaEngine.calculateDueDate(new Date(audit.coachingLog.releasedAt), ackSlaDays, audit.campaignId);
+      ackDeadline = endOfDay(ackDeadlineDate);
+    }
+
+    return { ...audit, scores: enrichedScores, ackDeadline, releaseDeadline };
   }
 
   async autosave(
@@ -737,7 +798,7 @@ export class AuditService {
   ) {
     const audit = await this.prisma.audit.findUnique({
       where: { id },
-      include: { formVersion: { include: { criteria: true } } },
+      include: { formVersion: { include: { criteria: { where: { isActive: true } } } } },
     });
 
     if (!audit) throw new NotFoundException('Audit not found');
@@ -805,7 +866,7 @@ export class AuditService {
       where: { auditId: id },
     });
     const { percent, isAutoFailed } = this.calculateScore(
-      audit.formVersion.criteria,
+      audit.formVersion.criteria.filter(c => c.isActive),
       allScores,
     );
 
@@ -863,18 +924,18 @@ export class AuditService {
     // 2. Data Integrity Validation WITH FRESHEST DATA
     const dbScores = audit.scores;
 
-    // A. Completeness Check (Only count scores for parameters in this specific FormVersion)
+    const activeCriteria = audit.formVersion.criteria.filter(c => c.isActive);
     const validCriterionIds = new Set(
-      audit.formVersion.criteria.map((c) => c.id),
+      activeCriteria.map((c) => c.id),
     );
     const relevantScores = dbScores.filter((s) =>
       validCriterionIds.has(s.criterionId),
     );
     const scoredCriteriaIds = new Set(relevantScores.map((s) => s.criterionId));
 
-    if (scoredCriteriaIds.size !== audit.formVersion.criteria.length) {
+    if (scoredCriteriaIds.size !== activeCriteria.length) {
       throw new BadRequestException(
-        `Audit is incomplete. Scored ${scoredCriteriaIds.size} out of ${audit.formVersion.criteria.length} items.`,
+        `Audit is incomplete. Scored ${scoredCriteriaIds.size} out of ${activeCriteria.length} items.`,
       );
     }
 
@@ -895,7 +956,7 @@ export class AuditService {
 
     // 3. Final Score Verification & Snapshotting Enforcement
     const { percent, isAutoFailed } = this.calculateScore(
-      audit.formVersion.criteria,
+      activeCriteria,
       relevantScores,
     );
 

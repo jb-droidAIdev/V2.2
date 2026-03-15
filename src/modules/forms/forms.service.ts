@@ -243,16 +243,8 @@ export class FormsService {
       }
     }
 
-    if (targetCampaignId) {
-      const existing = await this.prisma.monitoringForm.findFirst({
-        where: { campaignId: targetCampaignId, isArchived: false },
-      });
-      if (existing) {
-        throw new Error(
-          'A scorecard already exists for this configuration. Multiple forms per strategy are restricted.',
-        );
-      }
-    }
+    // Restriction removed: Allow multiple forms per campaign
+
 
     return this.prisma.$transaction(async (tx) => {
       const form = await tx.monitoringForm.create({
@@ -318,34 +310,52 @@ export class FormsService {
     });
   }
 
-  async findActiveByCampaign(campaignId: string, userId?: string) {
-    // 1. First, find if this user has a specific form assigned for this campaign
+  async findActiveByCampaign(idOrCampaignId: string, userId?: string) {
+    let campaignId: string | null = null;
     let pinnedFormId: string | null = null;
-    if (userId) {
+
+    // 1. Resolve if the ID provided is an explicit Form ID first
+    const formById = await this.prisma.monitoringForm.findUnique({
+      where: { id: idOrCampaignId },
+      include: { campaign: true }
+    });
+
+    if (formById) {
+      pinnedFormId = formById.id;
+      campaignId = formById.campaignId;
+    } else {
+      campaignId = idOrCampaignId;
+    }
+
+    // 2. Fetch campaign details (either from the form we just found, or by ID)
+    const campaign = formById?.campaign || (campaignId ? await this.prisma.campaign.findUnique({
+      where: { id: campaignId },
+    }) : null);
+
+    if (!campaign && !formById) return null;
+
+    // 3. Check if user has a specific form pinned via assignment (only if formId wasn't explicit in the request)
+    if (userId && !formById && campaignId) {
       const assignment = await this.prisma.campaignQA.findFirst({
         where: { campaignId, userId, isActive: true },
         select: { formId: true },
       });
-      pinnedFormId = assignment?.formId || null;
+      if (assignment?.formId) {
+        pinnedFormId = assignment.formId;
+      }
     }
 
-    // 2. Find the campaign to get its name (for fallback teamName lookup)
-    const campaign = await this.prisma.campaign.findUnique({
-      where: { id: campaignId },
-    });
-
-    if (!campaign) return null;
-
-    // 3. Search for a form that matches either the pinned ID or the campaign/team
+    // 4. Search for a form that matches either the pinned ID or the campaign/team
     const form = await this.prisma.monitoringForm.findFirst({
-      where: {
-        OR: [
-          ...(pinnedFormId ? [{ id: pinnedFormId }] : []),
-          { campaignId },
-          { teamName: campaign.name, campaignId: null },
-        ],
-        isArchived: false,
-      },
+      where: pinnedFormId 
+        ? { id: pinnedFormId, isArchived: false }
+        : {
+            OR: [
+              ...(campaignId ? [{ campaignId }] : []),
+              ...(campaign?.name ? [{ teamName: campaign.name, campaignId: null }] : []),
+            ],
+            isArchived: false,
+          },
       include: {
         campaign: true,
         versions: {
@@ -560,26 +570,8 @@ export class FormsService {
       sourceVersion.versionNumber,
     );
 
-    // 2. Check if target campaign already has a form
-    if (data.campaignId) {
-      const existing = await this.prisma.monitoringForm.findFirst({
-        where: { campaignId: data.campaignId, isArchived: false },
-      });
-      if (existing) {
-        throw new BadRequestException(
-          'A scorecard already exists for the selected campaign.',
-        );
-      }
-    } else if (data.teamName) {
-      const existing = await this.prisma.monitoringForm.findFirst({
-        where: { teamName: data.teamName, campaignId: null, isArchived: false },
-      });
-      if (existing) {
-        throw new BadRequestException(
-          'A scorecard already exists for the selected team.',
-        );
-      }
-    }
+    // Restriction removed: Allow multiple forms per campaign/team
+
 
     // 3. Create new Form
     const newForm = await this.prisma.monitoringForm.create({
@@ -614,6 +606,7 @@ export class FormsService {
             weight: c.weight,
             isCritical: c.isCritical || false,
             orderIndex: c.orderIndex,
+            isActive: c.isActive ?? true,
           })),
         },
       },

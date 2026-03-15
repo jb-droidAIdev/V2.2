@@ -18,8 +18,8 @@ async function main() {
             name: 'QA Expert Admin',
             role: 'QA',
             password: passwordHash,
-            eid: 'QA001',
-            systemId: 'SYS_QA_001',
+            eid: 'COPC_QA001',
+            systemId: 'SYS_COPC_QA_001',
             isActive: true,
             mustChangePassword: false
         }

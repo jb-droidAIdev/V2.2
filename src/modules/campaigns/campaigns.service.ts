@@ -113,7 +113,7 @@ export class CampaignsService {
             isArchived: false,
             versions: { some: { isActive: true } },
           },
-          select: { name: true },
+          select: { id: true, name: true },
         },
       };
 
@@ -136,30 +136,35 @@ export class CampaignsService {
       if (!campaigns) return [];
 
       return campaigns
-        .filter((campaign: any) => {
-          if (!campaign) return false;
-          const hasActiveDirectForm = (campaign.forms || []).length > 0;
-          const hasActiveTeamForm =
-            campaign.name && activeTeamNames.has(campaign.name);
-          const isUserCampaign = campaign.type !== 'ADMIN';
-          return (hasActiveDirectForm || hasActiveTeamForm) && isUserCampaign;
-        })
-        .map((campaign: any) => {
-          let scorecardName = campaign.forms?.[0]?.name;
-          if (!scorecardName) {
-            const teamForm = activeForms.find(
-              (f) => f && f.teamName === campaign.name,
-            );
-            scorecardName = teamForm?.name;
+        .flatMap((campaign: any) => {
+          const forms = campaign.forms || [];
+          
+          if (forms.length === 0) {
+            // Fallback for campaigns with no direct form link, search by team name matching
+            const teamForm = activeForms.find((f: any) => f.teamName === campaign.name);
+            
+            // Focus: If a campaign has completely NO forms, hide it from the dropdown
+            if (!teamForm) return [];
+
+            return [
+              {
+                id: teamForm.id,
+                name: campaign.name || 'Unnamed Campaign',
+                projectCode: campaign.projectCode || null,
+                type: campaign.type || 'USER',
+                scorecardName: teamForm.name,
+              },
+            ];
           }
 
-          return {
-            id: campaign.id,
+          // Return one entry per form for this campaign
+          return forms.map((form: any) => ({
+            id: form.id, // Provide Form ID as the primary selection ID
             name: campaign.name || 'Unnamed Campaign',
             projectCode: campaign.projectCode || null,
             type: campaign.type || 'USER',
-            scorecardName: scorecardName || 'Generic',
-          };
+            scorecardName: form.name,
+          }));
         });
     } catch (error) {
       console.error('CampaignsService.findAssigned Error:', error);
@@ -168,8 +173,18 @@ export class CampaignsService {
   }
 
   async findOneDetail(id: string) {
-    return this.prisma.campaign.findUnique({
+    // 1. Resolve ID (could be Campaign ID or Form ID)
+    let campaignId = id;
+    const formCheck = await this.prisma.monitoringForm.findUnique({
       where: { id },
+      select: { campaignId: true },
+    });
+    if (formCheck?.campaignId) {
+      campaignId = formCheck.campaignId;
+    }
+
+    return this.prisma.campaign.findUnique({
+      where: { id: campaignId },
       include: {
         qaAssignments: {
           include: { user: true },
@@ -200,6 +215,9 @@ export class CampaignsService {
     ztpAckSlaHours?: number;
     disputeWindowDays?: number;
     reappealWindowDays?: number;
+    coachingReleaseWindowDays?: number;
+    coachingCompletionWindowDays?: number;
+    coachingAckWindowDays?: number;
   }) {
     // Uniqueness check: One configuration per team/name
     const existing = await this.prisma.campaign.findFirst({
@@ -240,6 +258,9 @@ export class CampaignsService {
       ztpAckSlaHours?: number;
       disputeWindowDays?: number;
       reappealWindowDays?: number;
+      coachingReleaseWindowDays?: number;
+      coachingCompletionWindowDays?: number;
+      coachingAckWindowDays?: number;
     },
   ) {
     const { assignedUserIds, ...updateData } = data;

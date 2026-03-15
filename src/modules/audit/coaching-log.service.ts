@@ -11,11 +11,15 @@ import {
   UpdateCoachingLogDto,
 } from './dto/coaching-log.dto';
 
+import { SlaEngineService } from '../sla-engine/sla-engine.service';
+import { endOfDay } from 'date-fns';
+
 @Injectable()
 export class CoachingLogService {
   constructor(
     private prisma: PrismaService,
     private mailService: MailService,
+    private slaEngine: SlaEngineService,
   ) {}
 
   async findByAuditId(auditId: string) {
@@ -54,10 +58,41 @@ export class CoachingLogService {
       });
 
       if (!audit) throw new NotFoundException('Audit not found');
-      return { audit };
+      
+      const campaign = await this.prisma.campaign.findUnique({ where: { id: audit.campaignId } });
+      const releaseSlaDays = campaign?.coachingReleaseWindowDays ?? 3;
+      const releaseBasis = audit.submittedAt || audit.startedAt;
+      let releaseDeadline = null;
+      if (releaseBasis) {
+        const rDeadlineDate = await this.slaEngine.calculateDueDate(new Date(releaseBasis), releaseSlaDays, audit.campaignId);
+        releaseDeadline = endOfDay(rDeadlineDate);
+      }
+
+      return { audit, releaseDeadline };
     }
 
-    return log;
+    const auditIdForSla = log.audit.id;
+    const campaignId = log.audit.campaignId;
+    const releaseAt = log.releasedAt;
+
+    const campaign = await this.prisma.campaign.findUnique({ where: { id: campaignId } });
+    
+    let ackDeadline = null;
+    if (releaseAt) {
+      const ackSlaDays = campaign?.coachingAckWindowDays ?? 2;
+      const deadlineDate = await this.slaEngine.calculateDueDate(new Date(releaseAt), ackSlaDays, campaignId);
+      ackDeadline = endOfDay(deadlineDate);
+    }
+
+    let releaseDeadline = null;
+    const releaseSlaDays = campaign?.coachingReleaseWindowDays ?? 3;
+    const releaseBasis = log.audit.submittedAt || log.audit.startedAt;
+    if (releaseBasis) {
+      const rDeadlineDate = await this.slaEngine.calculateDueDate(new Date(releaseBasis), releaseSlaDays, campaignId);
+      releaseDeadline = endOfDay(rDeadlineDate);
+    }
+
+    return { ...log, ackDeadline, releaseDeadline };
   }
 
   async upsert(userId: string, data: CreateCoachingLogDto) {
@@ -127,6 +162,19 @@ export class CoachingLogService {
     if (!log) throw new NotFoundException('Coaching log not found');
     if (!log.releasedAt)
       throw new BadRequestException('Coaching log is not released yet');
+
+    // SLA Enforcement: Verify if the acknowledgment window has expired
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: log.audit.campaignId },
+    });
+    
+    const ackSlaDays = campaign?.coachingAckWindowDays ?? 2;
+    const deadlineDate = await this.slaEngine.calculateDueDate(new Date(log.releasedAt), ackSlaDays, log.audit.campaignId);
+    const deadline = endOfDay(deadlineDate);
+
+    if (new Date() > deadline) {
+      throw new BadRequestException('The acknowledgment window for this coaching log has expired. Please contact your supervisor.');
+    }
 
     return this.prisma.$transaction([
       this.prisma.coachingLog.update({

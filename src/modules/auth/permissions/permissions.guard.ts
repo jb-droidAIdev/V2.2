@@ -35,13 +35,12 @@ export class PermissionsGuard implements CanActivate {
       );
     }
 
-    // Admin Override (Implicit in permissions usually, but as failsafe)
-    if (
-      user.role === 'ADMIN' ||
-      user.roleName === 'ADMIN' ||
-      userPermissions.includes('*')
-    )
+    // Admin/Superuser Override
+    // We now rely EXCLUSIVELY on the wildcard '*' permission for total system access.
+    // This is safer than relying on a string field 'role' which might be spoofed.
+    if (userPermissions.includes('*')) {
       return true;
+    }
 
     if (!requiredPermissions) {
       return true;

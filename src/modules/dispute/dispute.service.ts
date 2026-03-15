@@ -493,19 +493,25 @@ export class DisputeService {
     const opsVips: string[] = [];
     const qaVips: string[] = [];
 
-    // Ops
-    if (agent.supervisor) {
+    // Ops — Use name + role filter to reduce collision risk
+    if (agent.supervisor?.trim()) {
       const sup = await this.prisma.user.findFirst({
         where: {
           name: { equals: agent.supervisor.trim(), mode: 'insensitive' },
+          role: { in: ['OPS_TL', 'QA_TL', 'OPS_MANAGER', 'SDM', 'ADMIN'] },
+          isActive: true,
         },
         select: { email: true },
       });
       if (sup?.email) opsVips.push(sup.email);
     }
-    if (agent.manager) {
+    if (agent.manager?.trim()) {
       const mgr = await this.prisma.user.findFirst({
-        where: { name: { equals: agent.manager.trim(), mode: 'insensitive' } },
+        where: {
+          name: { equals: agent.manager.trim(), mode: 'insensitive' },
+          role: { in: ['OPS_MANAGER', 'SDM', 'ADMIN'] },
+          isActive: true,
+        },
         select: { email: true },
       });
       if (mgr?.email) opsVips.push(mgr.email);

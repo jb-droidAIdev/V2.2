@@ -345,4 +345,17 @@ export class MailService {
     const subject = `📢 Release: Coaching Log for Ticket #${data.ticketId}`;
     return this.sendMail(data.to, subject, html);
   }
+
+  async sendPendingCoachingReminder(data: { to: string; agentName: string }) {
+    const content = `
+      <p>Hi ${data.agentName},</p>
+      <p>This is a reminder that you have a pending coaching log that still needs to be acknowledged.</p>
+      <p>Please visit the QMS to review and acknowledge your coaching log: <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/login" style="text-decoration: none; color: #0000EE;">QMS Login</a>.</p>
+      <p style="color: #666666;">"Do not reply to this email"</p>
+    `;
+
+    const html = this.getBaseTemplate(content, 'Pending Coaching Log Reminder');
+    const subject = 'Reminder: Pending Coaching Log';
+    return this.sendMail(data.to, subject, html);
+  }
 }

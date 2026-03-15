@@ -14,6 +14,8 @@ import { CalibrationModule } from './modules/calibration/calibration.module';
 import { RubricRevisionModule } from './modules/rubric-revision/rubric-revision.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { MailModule } from './modules/mail/mail.module';
+import { ScheduleModule } from '@nestjs/schedule';
+import { RemindersModule } from './modules/reminders/reminders.module';
 
 import { GlobalModule } from './global.module';
 import { UsersModule } from './modules/users/users.module';
@@ -37,6 +39,8 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
     MailModule,
     UsersModule,
     DashboardModule,
+    ScheduleModule.forRoot(),
+    RemindersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

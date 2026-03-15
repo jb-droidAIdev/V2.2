@@ -864,9 +864,10 @@ export class CalibrationService {
     // Calculate total range
     const totalRange = await this.calculateTotalRange(sessionId);
 
-    // Calculate R&R percentage
-    const calculatedRnR =
-      ((avgReproducibility + avgRepeatability) / totalRange) * 100;
+    // Calculate R&R percentage (GUARD AGAINST DIVIDE-BY-ZERO)
+    const calculatedRnR = totalRange > 0
+      ? ((avgReproducibility + avgRepeatability) / totalRange) * 100
+      : 0; // Perfect agreement = 0% variation
 
     // Calculate Accuracy
     const avgAccuracyGap = await this.calculateAccuracy(sessionId);

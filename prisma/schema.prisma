@@ -50,6 +50,9 @@ model User {
   @@index([role])
   @@index([isActive])
   @@index([name])
+  // Compound indexes for Filter Bar cascading performance
+  @@index([supervisor, employeeTeam])
+  @@index([role, isActive])
 }
 
 model Campaign {
@@ -62,11 +65,14 @@ model Campaign {
   updatedAt           DateTime             @updatedAt
   type                CampaignType         @default(USER)
   projectCode         String?
-  ztpAckSlaHours      Int                  @default(48)
-  ztpMilestones       Int[]                @default([3, 6, 9, 12, 15])
-  ztpWindowDays       Int                  @default(30)
-  disputeWindowDays   Int                  @default(5)
-  reappealWindowDays  Int                  @default(3)
+  ztpAckSlaHours                Int                  @default(48)
+  ztpMilestones                 Int[]                @default([3, 6, 9, 12, 15])
+  ztpWindowDays                 Int                  @default(30)
+  disputeWindowDays             Int                  @default(5)
+  reappealWindowDays            Int                  @default(3)
+  coachingReleaseWindowDays     Int                  @default(3)
+  coachingCompletionWindowDays  Int                  @default(5)
+  coachingAckWindowDays         Int                  @default(2)
   audits              Audit[]
   calibrationSessions CalibrationSession[] @relation("CampaignCalibrationSessions")
   qaAssignments       CampaignQA[]
@@ -234,6 +240,11 @@ model Audit {
   @@index([submittedAt])
   @@index([releasedAt])
   @@index([ticketReference])
+  // Compound indexes for Dashboard performance
+  @@index([campaignId, status, submittedAt])
+  @@index([agentId, submittedAt])
+  @@index([campaignId, agentId])
+  @@index([status, submittedAt])
 }
 
 model AuditUserView {
@@ -276,6 +287,8 @@ model AuditScore {
   @@index([categoryLabel])
   @@index([criterionTitle])
   @@index([isFailed])
+  // Compound index for failure heatmap queries
+  @@index([isFailed, auditId])
 }
 
 model AuditEvent {
@@ -540,6 +553,7 @@ model CoachingLog {
   actionPlan        Json?
   agentCommitment   String?
   agentAckAt        DateTime?
+  reminderSent      Boolean   @default(false)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
   audit             Audit     @relation(fields: [auditId], references: [id])

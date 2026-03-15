@@ -20,9 +20,14 @@ import {
   isSameDay,
 } from 'date-fns';
 
+import { SlaEngineService } from '../sla-engine/sla-engine.service';
+
 @Injectable()
 export class DashboardService {
-  constructor(private prisma: PrismaService) { }
+  constructor(
+    private prisma: PrismaService,
+    private slaEngine: SlaEngineService,
+  ) { }
 
   async getStats(
     filters: {
@@ -40,7 +45,15 @@ export class DashboardService {
     user: any,
   ) {
     try {
-      const role = String(user.role || '').toUpperCase();
+      if (!user) return this.getEmptyStats();
+      const role = String(user?.role || user?.roleName || '').toUpperCase();
+      const userId = user?.id || user?.userId;
+      
+      if (!userId) {
+        console.error('[DASHBOARD] User ID missing from request context:', user);
+        return this.getEmptyStats();
+      }
+
       const restrictedRoles = [
         'QA_TL',
         'QATL',
@@ -55,7 +68,7 @@ export class DashboardService {
       const now = new Date();
 
       console.log(
-        `[DASHBOARD] getStats Entry | User: ${user.id} | Role: ${role} | Filters: ${JSON.stringify(filters)}`,
+        `[DASHBOARD] getStats Entry | User: ${userId} | Role: ${role} | Filters: ${JSON.stringify(filters)}`,
       );
 
       // [MANDATORY ASSIGNMENT CHECK]
@@ -63,7 +76,7 @@ export class DashboardService {
       let assignedCampaignIds: string[] = [];
       if (restrictedRoles.includes(role)) {
         const userAssignments = await this.prisma.campaignQA.findMany({
-          where: { userId: user.id, isActive: true },
+          where: { userId: userId, isActive: true },
           select: { campaignId: true },
         });
 
@@ -71,7 +84,7 @@ export class DashboardService {
 
         if (assignedCampaignIds.length === 0) {
           console.log(
-            `[DASHBOARD] Restricted user ${user.id} has no assignments - returning absolute blank state.`,
+            `[DASHBOARD] Restricted user ${userId} has no assignments - returning absolute blank state.`,
           );
           return this.getEmptyStats();
         }
@@ -159,7 +172,7 @@ export class DashboardService {
 
         // 6. Security Boundaries
         if (role === 'AGENT') {
-          conditions.push({ agentId: user.id });
+          conditions.push({ agentId: userId });
         } else if (restrictedRoles.includes(role)) {
           conditions.push({ campaignId: { in: assignedCampaignIds } });
         }
@@ -169,7 +182,35 @@ export class DashboardService {
 
       const where = buildStatsWhere();
 
-      // Execute queries
+      // Execute queries using NATIVE DB AGGREGATIONS instead of in-memory loops
+      const [aggregateResult, totalCount, passingCount, disputedCount] = await Promise.all([
+        this.prisma.audit.aggregate({
+          where,
+          _sum: { score: true },
+        }),
+        this.prisma.audit.count({ where }),
+        this.prisma.audit.count({
+          where: { AND: [where, { score: { gte: 90 } }] },
+        }),
+        this.prisma.audit.count({
+          where: {
+            AND: [
+              where,
+              { status: { in: [AuditStatus.DISPUTED, AuditStatus.REAPPEALED] } },
+            ],
+          },
+        }),
+      ]);
+
+      if (totalCount === 0) return this.getEmptyStats();
+
+      const totalAudits = totalCount;
+      // Use _sum / totalCount to match original behavior (null scores treated as 0)
+      const avgScore = (aggregateResult._sum.score || 0) / totalAudits;
+      const complianceRate = (passingCount / totalAudits) * 100;
+      const disputeRate = (disputedCount / totalAudits) * 100;
+
+      // Fetch lean audit data for trend and agent grouping (only needed fields)
       const audits = await this.prisma.audit.findMany({
         where,
         select: {
@@ -180,23 +221,6 @@ export class DashboardService {
           submittedAt: true,
         },
       });
-
-      if (audits.length === 0) return this.getEmptyStats();
-
-      const totalAudits = audits.length;
-      let totalScoreSum = 0;
-      let passingAudits = 0;
-      let disputedCount = 0;
-
-      audits.forEach((a) => {
-        totalScoreSum += a.score || 0;
-        if ((a.score || 0) >= 90) passingAudits++;
-        if (a.status === AuditStatus.DISPUTED || a.status === AuditStatus.REAPPEALED) disputedCount++;
-      });
-
-      const avgScore = totalScoreSum / totalAudits;
-      const complianceRate = (passingAudits / totalAudits) * 100;
-      const disputeRate = (disputedCount / totalAudits) * 100;
 
       // 2. Trend Data - Single Pass Grouping (O(N))
       const granularity = filters.granularity || 'day';
@@ -261,40 +285,28 @@ export class DashboardService {
         };
       });
 
-      // 3. Failure Categories Heatmap
-      const failedScores = await this.prisma.auditScore.findMany({
+      // 3. Failure Categories Heatmap - NATIVE DB GROUP BY
+      const categoryStats = await this.prisma.auditScore.groupBy({
+        by: ['categoryLabel', 'criterionTitle'],
         where: {
           isFailed: true,
           audit: where,
         },
-        include: {
-          criterion: { select: { categoryName: true, title: true } },
-        },
+        _count: { _all: true },
       });
 
-      const categoryAggregation = failedScores.reduce(
-        (acc, curr) => {
-          // Prioritize snapshot labels for historical integrity, fallback to live relation
-          const cat = (
-            curr.categoryLabel ||
-            curr.criterion?.categoryName ||
-            'General'
-          ).trim();
-          const title =
-            curr.criterionTitle || curr.criterion?.title || 'Unknown Parameter';
+      const categoryAggregation: Record<string, { count: number; parameters: Record<string, number> }> = {};
 
-          if (!acc[cat]) {
-            acc[cat] = { count: 0, parameters: {} as Record<string, number> };
-          }
-          acc[cat].count += 1;
-          acc[cat].parameters[title] = (acc[cat].parameters[title] || 0) + 1;
-          return acc;
-        },
-        {} as Record<
-          string,
-          { count: number; parameters: Record<string, number> }
-        >,
-      );
+      categoryStats.forEach((stat) => {
+        const cat = (stat.categoryLabel || 'General').trim();
+        const title = stat.criterionTitle || 'Unknown Parameter';
+        
+        if (!categoryAggregation[cat]) {
+          categoryAggregation[cat] = { count: 0, parameters: {} };
+        }
+        categoryAggregation[cat].count += stat._count._all;
+        categoryAggregation[cat].parameters[title] = (categoryAggregation[cat].parameters[title] || 0) + stat._count._all;
+      });
 
       const failureHeatmap = Object.entries(categoryAggregation)
         .map(([name, data]) => ({
@@ -306,28 +318,27 @@ export class DashboardService {
         }))
         .sort((a, b) => b.value - a.value);
 
-      // Agent Scores Aggregation - Manually from audits array to bypass groupBy relation filter limits
-      const agentAggregation: Record<string, { count: number; totalScore: number }> = {};
-      audits.forEach((a) => {
-        if (!agentAggregation[a.agentId])
-          agentAggregation[a.agentId] = { count: 0, totalScore: 0 };
-        agentAggregation[a.agentId].count++;
-        agentAggregation[a.agentId].totalScore += a.score || 0;
+      // Agent Scores Aggregation - NATIVE DB GROUP BY
+      const agentStats = await this.prisma.audit.groupBy({
+        by: ['agentId'],
+        where,
+        _sum: { score: true },
+        _count: { _all: true },
       });
 
-      const agentIdsForNames = Object.keys(agentAggregation);
+      const agentIdsForNames = agentStats.map(s => s.agentId);
       const agents = await this.prisma.user.findMany({
         where: { id: { in: agentIdsForNames } },
         select: { id: true, name: true }
       });
       const agentMap = new Map(agents.map(a => [a.id, a.name]));
 
-      const agentScores = Object.entries(agentAggregation).map(([agentId, data]) => {
+      const agentScores = agentStats.map((stat) => {
         return {
-          agentId,
-          agentName: agentMap.get(agentId) || 'Unknown Agent',
-          auditCount: data.count,
-          avgScore: parseFloat((data.totalScore / data.count).toFixed(2)),
+          agentId: stat.agentId,
+          agentName: agentMap.get(stat.agentId) || 'Unknown Agent',
+          auditCount: stat._count._all,
+          avgScore: parseFloat(((stat._sum.score || 0) / stat._count._all).toFixed(2)),
         };
       });
 
@@ -340,13 +351,13 @@ export class DashboardService {
 
       // Single Agent Detection Logic:
       const filteredAgentIds = this.normalizeArray(filters.agentId);
-      let targetAgentId = null;
+      let targetAgentId: string | null = null;
       if (filteredAgentIds.length === 1) {
         targetAgentId = filteredAgentIds[0];
       } else if (agentScores.length === 1) {
         targetAgentId = agentScores[0].agentId;
-      } else if (user.role === Role.AGENT) {
-        targetAgentId = user.id;
+      } else if (role === 'AGENT' && userId) {
+        targetAgentId = userId;
       }
 
       // Deduce if we have specific filters to apply to the monitor
@@ -357,7 +368,7 @@ export class DashboardService {
       const auditorIds = this.normalizeArray(filters.auditorId);
 
       // For Management: Calculate all active progressions across the scope
-      if (user.role !== Role.AGENT) {
+      if (role !== 'AGENT') {
         // Fetch failures for agents in the CURRENT filtered scope.
         // We look back 365 days to ensure we have enough context for the rolling window,
         // but we restrict the "starting point" (the audits themselves) to the active filters.
@@ -462,9 +473,7 @@ export class DashboardService {
 
             if (count >= sortedMilestones[0]) {
               let sanction = 'Written Warning';
-              const hitIdx = [...sortedMilestones]
-                .reverse()
-                .findIndex((m) => count >= m);
+              const hitIdx = [...sortedMilestones].reverse().findIndex((m) => count >= m);
 
               if (hitIdx === 0) sanction = 'Termination';
               else if (hitIdx === 1) sanction = 'Suspension (5 Days)';
@@ -533,7 +542,7 @@ export class DashboardService {
         });
 
         // Security: If actually an agent, filter out non-released status artifacts (they only see released/acknowledged)
-        const agentIdCheck = String(user.role || '').toUpperCase();
+        const agentIdCheck = role;
         const filteredFailures = agentIdCheck === 'AGENT'
           ? agentFailures.filter(f => f.audit && f.audit.status !== 'SUBMITTED')
           : agentFailures;
@@ -570,9 +579,7 @@ export class DashboardService {
 
             let sanction = null;
             if (count >= sortedMilestones[0]) {
-              const hitIdx = [...sortedMilestones]
-                .reverse()
-                .findIndex((m) => count >= m);
+              const hitIdx = [...sortedMilestones].reverse().findIndex((m) => count >= m);
               if (hitIdx === 0) sanction = 'For Termination';
               else if (hitIdx === 1) sanction = 'For Suspension (5 Days)';
               else if (hitIdx === 2) sanction = 'For Suspension (3 Days)';
@@ -591,6 +598,7 @@ export class DashboardService {
               lastInfraction: lastInfractionDate,
               sanction,
               milestones: sortedMilestones,
+              ztpWindowDays,
             };
           })
           .sort((a, b) => b.count - a.count);
@@ -630,18 +638,24 @@ export class DashboardService {
                 criterion: { select: { title: true, categoryName: true } },
               },
             },
+            coachingLog: true,
           },
         }),
       };
     } catch (error) {
-      console.error(`[DASHBOARD_STATS] ERROR for User ${user.id} [${user.role}]:`, error.message, error.stack);
+      console.error(`[DASHBOARD_STATS] ERROR for User ${user?.id || 'unknown'}:`, error?.message || 'Unknown error', error?.stack);
       return this.getEmptyStats();
     }
   }
 
   async getFilterOptions(user: any, filters: any = {}) {
     try {
-      const role = String(user.role || '').toUpperCase();
+      if (!user) return { campaigns: [], supervisors: [], sdms: [], agents: [], qas: [] };
+      const role = String(user?.role || user?.roleName || '').toUpperCase();
+      const userId = user?.id || user?.userId;
+      
+      if (!userId) return { campaigns: [], supervisors: [], sdms: [], agents: [], qas: [] };
+
       const isStaff = role !== 'AGENT';
       const isManagerRestricted = [
         'QA_TL',
@@ -655,7 +669,7 @@ export class DashboardService {
       ].includes(role);
 
       console.log(
-        `[DASHBOARD] getFilterOptions | User ID: ${user.id} | role=${role} | restricted=${isManagerRestricted}`,
+        `[DASHBOARD] getFilterOptions | User ID: ${userId} | role=${role} | restricted=${isManagerRestricted}`,
       );
 
       const activeCampaigns = this.normalizeArray(filters.campaignId);
@@ -667,7 +681,7 @@ export class DashboardService {
 
       if (isManagerRestricted) {
         const assignments = await this.prisma.campaignQA.findMany({
-          where: { userId: user.id, isActive: true },
+          where: { userId: userId, isActive: true },
           select: { campaignId: true },
         });
         const assignedIds = assignments.map((a) => a.campaignId);
@@ -694,7 +708,7 @@ export class DashboardService {
           // Strict: only show agents who have actually been audited in these campaigns
           conditions.push({ auditsReceived: { some: { campaignId: { in: allowedCampaignIds } } } });
         } else if (!isStaff) {
-          conditions.push({ id: user.id });
+          conditions.push({ id: userId });
         } else {
           // Global Staff/Admin: also only show audited agents
           conditions.push({ auditsReceived: { some: {} } });
@@ -743,7 +757,7 @@ export class DashboardService {
       const campaignFilter: any = { type: 'USER' };
       if (isManagerRestricted) {
         campaignFilter.id = { in: (await this.prisma.campaignQA.findMany({
-          where: { userId: user.id, isActive: true },
+          where: { userId: userId, isActive: true },
           select: { campaignId: true },
         })).map(a => a.campaignId) };
       }
@@ -842,7 +856,12 @@ export class DashboardService {
   }
   async getCoachingStats(filters: any, user: any) {
     try {
-      const role = String(user.role || '').toUpperCase();
+      if (!user) return this.getEmptyCoachingStats();
+      const role = String(user?.role || user?.roleName || '').toUpperCase();
+      const userId = user?.id || user?.userId;
+      
+      if (!userId) return this.getEmptyCoachingStats();
+
       const restrictedRoles = ['QA_TL', 'QATL', 'OPS_TL', 'OPSTL', 'OPS_MANAGER', 'OPSMANAGER', 'SDM', 'QA'];
       const now = new Date();
 
@@ -850,7 +869,7 @@ export class DashboardService {
       let assignedCampaignIds: string[] = [];
       if (restrictedRoles.includes(role)) {
         const userAssignments = await this.prisma.campaignQA.findMany({
-          where: { userId: user.id, isActive: true },
+          where: { userId: userId, isActive: true },
           select: { campaignId: true },
         });
         assignedCampaignIds = userAssignments.map((a) => a.campaignId);
@@ -884,7 +903,7 @@ export class DashboardService {
 
         // 1. Role-based Security
         if (role === 'AGENT') {
-          conditions.push({ agentId: user.id });
+          conditions.push({ agentId: userId });
         } else if (restrictedRoles.includes(role)) {
           conditions.push({ campaignId: { in: assignedCampaignIds } });
         }
@@ -925,6 +944,7 @@ export class DashboardService {
         include: {
           agent: true,
           auditor: true,
+          campaign: true,
           coachingLog: { include: { supervisor: true } },
         },
       });
@@ -932,54 +952,89 @@ export class DashboardService {
       if (audits.length === 0) return this.getEmptyCoachingStats();
 
 
-      const results = audits.map((audit) => {
+      const results = (await Promise.all(audits.map(async (rawAudit) => {
         try {
+          const audit = rawAudit as any;
           const sentDate = new Date(audit.releasedAt!);
           const minTime = addHours(sentDate, 24);
 
-          // SLA: 2 Business Days (Due by End of Day)
-          let deadline = endOfDay(sentDate);
-          let bizDays = 0;
-          while (bizDays < 2) {
-            deadline = addDays(deadline, 1);
-            if (!isWeekend(deadline)) bizDays++;
-          }
-          deadline = endOfDay(deadline);
+          // 1. Release SLA (Supervisor Action: Audit Release -> Coaching Release)
+          const releaseSlaDays = audit.campaign?.coachingReleaseWindowDays ?? 3;
+          const releaseDeadlineDate = await this.slaEngine.calculateDueDate(sentDate, releaseSlaDays, audit.campaignId);
+          const releaseDeadline = endOfDay(releaseDeadlineDate);
 
+          // 2. Acknowledgment SLA (Agent Action: Coaching Release -> Agent Ack)
           const coachingDate = audit.coachingLog?.releasedAt ? new Date(audit.coachingLog.releasedAt) : null;
           const acknowledged = !!audit.coachingLog?.agentAckAt;
-
-          let status = 'Not Started';
+          const ackDate = audit.coachingLog?.agentAckAt ? new Date(audit.coachingLog.agentAckAt) : null;
+          
+          let ackDeadline = null;
           if (coachingDate) {
-            if (coachingDate < minTime) status = 'Early';
-            else if (coachingDate <= deadline) status = 'On-Time';
-            else status = 'Late';
-          } else {
-            status = now > deadline ? 'Overdue' : 'Not Started';
+            const ackSlaDays = audit.campaign?.coachingAckWindowDays ?? 2;
+            const ackDeadlineDate = await this.slaEngine.calculateDueDate(coachingDate, ackSlaDays, audit.campaignId);
+            ackDeadline = endOfDay(ackDeadlineDate);
           }
 
-          const isBreached = status === 'Late' || status === 'Overdue';
+          // 3. Completion SLA (Total Process: Audit Release -> Agent Ack)
+          const completionSlaDays = audit.campaign?.coachingCompletionWindowDays ?? 5;
+          const completionDeadlineDate = await this.slaEngine.calculateDueDate(sentDate, completionSlaDays, audit.campaignId);
+          const completionDeadline = endOfDay(completionDeadlineDate);
+
+          // 1. Supervisor Status (Audit Release -> Coaching Release)
+          let supervisorStatus = 'Not Started';
+          if (coachingDate) {
+            if (coachingDate < minTime) supervisorStatus = 'Early';
+            else if (coachingDate <= releaseDeadline) supervisorStatus = 'On-Time';
+            else supervisorStatus = 'Late';
+          } else {
+            supervisorStatus = now > releaseDeadline ? 'Overdue' : 'Not Started';
+          }
+
+          // 2. Agent Status (Coaching Release -> Agent Ack)
+          let agentStatus = 'Awaiting Release';
+          if (acknowledged && coachingDate) {
+            const minAckTime = addHours(coachingDate, 24);
+            if (ackDate < minAckTime) agentStatus = 'Early';
+            else if (ackDeadline && ackDate <= ackDeadline) agentStatus = 'On-Time';
+            else agentStatus = 'Late';
+          } else if (coachingDate) {
+            agentStatus = (ackDeadline && now > ackDeadline) ? 'Overdue' : 'Pending';
+          } else if (supervisorStatus === 'Overdue') {
+            agentStatus = 'Overdue'; // Blocked by supervisor breach
+          }
+
+          // Comprehensive Breach Check
+          const isReleaseBreached = supervisorStatus === 'Late' || supervisorStatus === 'Overdue';
+          const isAckBreached = agentStatus === 'Late' || agentStatus === 'Overdue';
+          const isBreached = isReleaseBreached || isAckBreached;
+
           const requiresCoaching = (audit.score || 0) < 100;
 
           return {
             id: audit.id,
             agentName: audit.agent.name,
             supervisorName: audit.agent.supervisor || audit.coachingLog?.supervisor?.name || 'Unknown',
-            status,
+            supervisorStatus,
+            agentStatus,
+            status: role === 'AGENT' ? agentStatus : supervisorStatus,
             isBreached,
             acknowledged,
             isReleased: !!coachingDate,
             sentDate,
             coachingDate,
-            deadline,
+            deadline: releaseDeadline,
+            releaseDeadline,
+            ackDeadline,
+            completionDeadline,
             ticketReference: audit.ticketReference,
             score: audit.score,
             requiresCoaching,
+            coachingType: requiresCoaching ? 'Required' : 'Feedback',
           };
         } catch (e) {
           return null;
         }
-      }).filter(Boolean) as any[];
+      }))).filter(Boolean) as any[];
 
       // Aggregators
       const agentMap = new Map();
@@ -988,28 +1043,35 @@ export class DashboardService {
       results.forEach(r => {
         if (!r.requiresCoaching) return; // Skip 100% audits for these metrics
 
-        // Agent Table Stats
+        const isNotStarted = r.status === 'Not Started' && !r.isBreached;
+
+        // Agent Table Stats - ONLY include items that are released or already breached
         if (!agentMap.has(r.agentName)) {
           agentMap.set(r.agentName, {
             name: r.agentName, total: 0, completed: 0, pending: 0, overdue: 0,
             early: 0, onTime: 0, late: 0, breached: 0, metricsTotal: 0
           });
         }
-        const a = agentMap.get(r.agentName);
-        a.total++;
-        a.metricsTotal++;
 
-        if (r.acknowledged) a.completed++;
-        else if (r.isReleased) a.pending++;
-        else if (r.status === 'Overdue') a.overdue++;
+        if (!isNotStarted) {
+          const a = agentMap.get(r.agentName);
+          a.total++;
+          a.metricsTotal++;
 
-        if (r.status !== 'Not Started') a.metricsTotal++;
-
-        if (r.status === 'Early') a.early++;
-        else if (r.status === 'On-Time') a.onTime++;
-        else if (r.status === 'Late') a.late++;
-
-        if (r.isBreached) a.breached++;
+          if (r.acknowledged) a.completed++;
+          else if (r.isReleased) {
+            if (r.ackDeadline && now > r.ackDeadline) a.overdue++;
+            else a.pending++;
+          } else if (r.status === 'Overdue') {
+            a.overdue++;
+          }
+          
+          if (r.status !== 'Not Started') a.metricsTotal++;
+          if (r.agentStatus === 'Early') a.early++;
+          else if (r.agentStatus === 'On-Time') a.onTime++;
+          else if (r.agentStatus === 'Late') a.late++;
+          if (r.isBreached) a.breached++;
+        }
 
         // Supervisor Table Stats
         const sName = role === 'AGENT' ? r.agentName : r.supervisorName;
@@ -1023,14 +1085,28 @@ export class DashboardService {
         s.total++;
 
         if (r.acknowledged) s.completed++;
-        else if (r.isReleased) s.pending++;
-        else if (r.status === 'Overdue') s.overdue++;
+        else if (r.isReleased) {
+          if (r.ackDeadline && now > r.ackDeadline) s.overdue++;
+          else s.pending++;
+        } else if (r.status === 'Overdue') {
+          s.overdue++;
+        } else {
+          // Status is 'Not Started' - only pending if it's the supervisor accountability view
+          // For an agent viewing their own performance, hide supervisor-pending items from 'Pending'
+          if (role !== 'AGENT') s.pending++;
+        }
+        
+        // Re-calculate Total for the table to exclude items the current user shouldn't see as 'pending'
+        // This ensures Compliance = Completed / (Completed + Pending + Overdue) stays accurate to the context
+        if (role === 'AGENT' && r.status === 'Not Started') {
+          s.total--;
+        }
 
-        if (r.status !== 'Not Started') s.metricsTotal++;
+        const currentStatus = role === 'AGENT' ? r.agentStatus : r.supervisorStatus;
 
-        if (r.status === 'Early') s.early++;
-        else if (r.status === 'On-Time') s.onTime++;
-        else if (r.status === 'Late') s.late++;
+        if (currentStatus === 'Early') s.early++;
+        else if (currentStatus === 'On-Time') s.onTime++;
+        else if (currentStatus === 'Late') s.late++;
 
         if (r.isBreached) s.breached++;
       });
@@ -1038,15 +1114,14 @@ export class DashboardService {
       const supervisorAccountability = Array.from(supervisorMap.values()).map(s => {
         return {
           ...s,
-          compliance: s.total > 0 ? ((s.completed + s.pending) / s.total) * 100 : 100
+          compliance: s.total > 0 ? (s.completed / s.total) * 100 : 100
         };
       }).sort((a, b) => a.compliance - b.compliance);
 
       const agentCoverage = Array.from(agentMap.values()).map(a => {
-        const denom = a.pending + a.overdue;
         return {
           ...a,
-          complianceRate: denom > 0 ? (a.completed / denom) * 100 : 100
+          complianceRate: a.total > 0 ? (a.completed / a.total) * 100 : 100
         };
       }).sort((a, b) => b.overdue - a.overdue);
 
@@ -1074,30 +1149,48 @@ export class DashboardService {
       const summary = {
         totalAudits: totalMandatory,
         completed: results.filter(r => r.requiresCoaching && r.acknowledged).length,
-        pending: results.filter(r => r.requiresCoaching && r.isReleased && !r.acknowledged).length,
+        pending: results.filter(r => {
+          if (!r.requiresCoaching || r.acknowledged || r.isBreached) return false;
+          return r.isReleased;
+        }).length,
         complianceRate,
         onTimeRate,
         early: results.filter(r => r.requiresCoaching && r.status === 'Early').length,
         late: results.filter(r => r.requiresCoaching && r.status === 'Late').length,
-        overdue: results.filter(r => r.requiresCoaching && r.status === 'Overdue').length,
-        notStarted: results.filter(r => r.requiresCoaching && r.status === 'Not Started').length,
+        overdue: results.filter(r => r.requiresCoaching && !r.acknowledged && r.isBreached).length,
+        notStarted: results.filter(r => r.requiresCoaching && r.status === 'Not Started' && !r.isBreached).length,
       };
 
       const overdueTracker = results
-        .filter(r => r.requiresCoaching && r.status === 'Overdue')
+        .filter(r => r.requiresCoaching && !r.acknowledged && r.isBreached)
         .map(r => ({
           id: r.id,
           agentName: r.agentName,
           supervisorName: r.supervisorName,
           sentDate: r.sentDate,
-          deadline: r.deadline,
-          hoursOverdue: Math.max(0, differenceInHours(now, r.deadline)),
-          ticketReference: r.ticketReference
+          deadline: r.isReleased ? r.ackDeadline : r.releaseDeadline,
+          hoursOverdue: Math.max(0, differenceInHours(now, r.isReleased ? r.ackDeadline : r.releaseDeadline)),
+          ticketReference: r.ticketReference,
+          breachType: r.isReleased ? 'Agent Acknowledgment' : 'Supervisor Release'
         }))
         .sort((a, b) => b.hoursOverdue - a.hoursOverdue);
 
       const pendingTracker = results
-        .filter(r => r.requiresCoaching && r.isReleased && !r.acknowledged)
+        .filter(r => r.requiresCoaching && r.isReleased && !r.acknowledged && !r.isBreached)
+        .map(r => ({
+          ...r,
+          deadline: r.ackDeadline, // Override for Agent View
+          hoursUntilOverdue: r.ackDeadline ? Math.max(0, differenceInHours(r.ackDeadline, now)) : 0
+        }))
+        .sort((a, b) => b.sentDate.getTime() - a.sentDate.getTime());
+
+      const coachingActivity = results
+        .filter(r => role === 'AGENT' ? r.isReleased : (r.requiresCoaching || r.isReleased))
+        .map(r => ({
+          ...r,
+          deadline: r.acknowledged ? r.coachingDate : (r.isReleased ? r.ackDeadline : r.releaseDeadline),
+          hoursOverdue: r.isBreached ? Math.max(0, differenceInHours(now, r.isReleased ? r.ackDeadline : r.releaseDeadline)) : 0
+        }))
         .sort((a, b) => b.sentDate.getTime() - a.sentDate.getTime());
 
       // Activity Trend - Single Pass Grouping (O(N))
@@ -1179,11 +1272,11 @@ export class DashboardService {
       return {
         summary,
         timelinessBreakdown: [
-          { name: 'Early', value: results.filter(r => r.status === 'Early').length },
-          { name: 'On-Time', value: results.filter(r => r.status === 'On-Time').length },
-          { name: 'Late', value: results.filter(r => r.status === 'Late').length },
-          { name: 'Overdue', value: results.filter(r => r.status === 'Overdue' && r.requiresCoaching).length },
-          { name: 'Not Started', value: results.filter(r => r.status === 'Not Started' && r.requiresCoaching).length },
+          { name: 'Early', value: results.filter(r => (role === 'AGENT' ? r.agentStatus : r.supervisorStatus) === 'Early').length },
+          { name: 'On-Time', value: results.filter(r => (role === 'AGENT' ? r.agentStatus : r.supervisorStatus) === 'On-Time').length },
+          { name: 'Late', value: results.filter(r => (role === 'AGENT' ? r.agentStatus : r.supervisorStatus) === 'Late').length },
+          { name: 'Overdue', value: results.filter(r => r.requiresCoaching && !r.acknowledged && r.isBreached).length },
+          { name: 'Not Started', value: results.filter(r => r.requiresCoaching && r.supervisorStatus === 'Not Started' && !r.isBreached).length },
         ],
         supervisorAccountability,
         agentCoverage,
@@ -1195,6 +1288,7 @@ export class DashboardService {
           date: m.date,
           count: m.count + (optionalActivityTrend[i]?.count || 0)
         })),
+        coachingActivity,
       };
     } catch (error) {
       console.error('[COACHING_STATS] ERROR:', error);
@@ -1233,6 +1327,7 @@ export class DashboardService {
       mandatoryActivityTrend: [],
       optionalActivityTrend: [],
       activityTrend: [],
+      coachingActivity: [],
     };
   }
 

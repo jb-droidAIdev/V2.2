@@ -7,6 +7,7 @@ export class PermissionsService {
 
   // Method to get permissions for a user from the database
   async getUserPermissions(userId: string): Promise<string[]> {
+    if (!userId) return [];
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -52,6 +53,7 @@ export enum Permission {
   // ── System ─────────────────────────────────────────────────────────
   USER_MANAGE = 'USER_MANAGE',
   CAMPAIGN_MANAGE = 'CAMPAIGN_MANAGE',
+  DASHBOARD_VIEW = 'DASHBOARD_VIEW',
   WILDCARD = '*',
 
   // ── Audit ──────────────────────────────────────────────────────────

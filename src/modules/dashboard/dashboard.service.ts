@@ -1030,6 +1030,7 @@ export class DashboardService {
             score: audit.score,
             requiresCoaching,
             coachingType: requiresCoaching ? 'Required' : 'Feedback',
+            agentAckAt: audit.coachingLog?.agentAckAt,
           };
         } catch (e) {
           return null;

@@ -163,18 +163,11 @@ export class CoachingLogService {
     if (!log.releasedAt)
       throw new BadRequestException('Coaching log is not released yet');
 
-    // SLA Enforcement: Verify if the acknowledgment window has expired
+    // SLA Enforcement: The status (Late/On-Time) is calculated dynamically in the dashboard service 
+    // based on the agentAckAt timestamp, so we allow the update to proceed here even if late.
     const campaign = await this.prisma.campaign.findUnique({
       where: { id: log.audit.campaignId },
     });
-    
-    const ackSlaDays = campaign?.coachingAckWindowDays ?? 2;
-    const deadlineDate = await this.slaEngine.calculateDueDate(new Date(log.releasedAt), ackSlaDays, log.audit.campaignId);
-    const deadline = endOfDay(deadlineDate);
-
-    if (new Date() > deadline) {
-      throw new BadRequestException('The acknowledgment window for this coaching log has expired. Please contact your supervisor.');
-    }
 
     return this.prisma.$transaction([
       this.prisma.coachingLog.update({

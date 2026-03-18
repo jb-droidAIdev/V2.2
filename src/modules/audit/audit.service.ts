@@ -113,7 +113,7 @@ export class AuditService {
       where.status = {
         in: [
           AuditStatus.RELEASED,
-          (AuditStatus as any).ACKNOWLEDGED,
+          AuditStatus.ACKNOWLEDGED,
           AuditStatus.DISPUTED,
           AuditStatus.REAPPEALED,
         ],
@@ -150,7 +150,7 @@ export class AuditService {
           where: { userId: user.id },
         },
         coachingLog: {
-          select: { id: true, releasedAt: true },
+          select: { id: true, releasedAt: true, agentAckAt: true },
         },
       } as any,
       orderBy: { lastActionAt: 'desc' },
@@ -201,7 +201,7 @@ export class AuditService {
           AuditStatus.RELEASED,
           AuditStatus.DISPUTED,
           AuditStatus.REAPPEALED,
-          (AuditStatus as any).ACKNOWLEDGED,
+          AuditStatus.ACKNOWLEDGED,
         ],
       },
     };

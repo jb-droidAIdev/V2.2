@@ -16,7 +16,7 @@ import { MailModule } from '../mail/mail.module';
     PassportModule,
     JwtModule.register({
       secret: jwtConstants.secret,
-      signOptions: { expiresIn: '60m' },
+      signOptions: { expiresIn: '7d' },
     }),
   ],
   providers: [AuthService, JwtStrategy, PermissionsService, PrismaService],

@@ -110,16 +110,25 @@ export class DashboardService {
           conditions[0].status.in = conditions[0].status.in.filter((s: any) => s !== AuditStatus.SUBMITTED);
         }
 
-        // 1. Date Range
+        // 1. Date Range (Aligned with UTC+8 Local Time)
         if (filters.startDate || filters.endDate) {
           const dateCond: any = {};
           if (filters.startDate) {
             const sd = new Date(filters.startDate);
-            if (!isNaN(sd.getTime())) dateCond.gte = sd;
+            if (!isNaN(sd.getTime())) {
+              // Align Local Midnight to UTC: 00:00 Local = 16:00 (Prev Day) UTC
+              sd.setHours(sd.getHours() - 8); 
+              dateCond.gte = sd;
+            }
           }
           if (filters.endDate) {
             const ed = new Date(filters.endDate);
-            if (!isNaN(ed.getTime())) dateCond.lte = endOfDay(ed);
+            if (!isNaN(ed.getTime())) {
+              // End of Day Local (23:59:59) shifted to UTC (15:59:59 UTC)
+              const localEndOfDay = endOfDay(ed);
+              localEndOfDay.setHours(localEndOfDay.getHours() - 8);
+              dateCond.lte = localEndOfDay;
+            }
           }
           if (Object.keys(dateCond).length > 0) conditions.push({ submittedAt: dateCond });
         }
@@ -251,13 +260,18 @@ export class DashboardService {
       const trendDataMap = new Map<string, { total: number; count: number }>();
       audits.forEach((a) => {
         if (!a.submittedAt) return;
+
+        // CRITICAL FIX: Shift UTC timestamp to Local (UTC+8) for grouping
+        // This ensures an audit at 3 AM UTC (11 AM Local) groups into the correct day.
+        const localSubmittedAt = new Date(a.submittedAt.getTime() + (8 * 60 * 60 * 1000));
+        
         let bucketKey;
         if (granularity === 'month') {
-          bucketKey = format(a.submittedAt, 'MMM yyyy');
+          bucketKey = format(localSubmittedAt, 'MMM yyyy');
         } else if (granularity === 'week') {
-          bucketKey = format(startOfWeek(a.submittedAt), 'MMM d');
+          bucketKey = format(startOfWeek(localSubmittedAt), 'MMM d');
         } else {
-          bucketKey = format(a.submittedAt, 'MMM dd');
+          bucketKey = format(localSubmittedAt, 'MMM dd');
         }
 
         const existing = trendDataMap.get(bucketKey) || { total: 0, count: 0 };

@@ -56,8 +56,13 @@ export class FormsService {
         ...form,
         hasAudits: idsWithAudits.has(form.id),
       }));
-    } catch (error) {
-      console.error('FormsService.findAll Error:', error);
+    } catch (error: any) {
+      console.error('FormsService.findAll Error:', {
+        message: error?.message,
+        code: error?.code,
+        stack: error?.stack,
+        meta: error?.meta,
+      });
       throw error;
     }
   }

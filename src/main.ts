@@ -1,3 +1,4 @@
+// REFRESH: Force restart to reload .env
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { json, urlencoded } from 'express';

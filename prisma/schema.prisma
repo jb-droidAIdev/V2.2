@@ -108,6 +108,7 @@ model MonitoringForm {
   isArchived    Boolean                 @default(false)
   dispositions  String[]                @default([])
   methodology   String?
+  customFields  Json?
   qaAssignments CampaignQA[]
   campaign      Campaign?               @relation(fields: [campaignId], references: [id])
   versions      MonitoringFormVersion[]

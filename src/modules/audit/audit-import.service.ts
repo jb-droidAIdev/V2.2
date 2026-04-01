@@ -129,6 +129,14 @@ export class AuditImportService {
         if (aht) await this.prisma.auditFieldValue.create({ data: { auditId: audit.id, fieldName: 'AHT', value: aht } });
         if (disposition) await this.prisma.auditFieldValue.create({ data: { auditId: audit.id, fieldName: 'Disposition', value: disposition } });
 
+        // Also persist transactionType and interactionDate so the Audits table + Preview modal read them correctly
+        const transactionType = String(firstRow['Type'] || '').trim();
+        if (transactionType && transactionType.toUpperCase() !== 'N/A') {
+            await this.prisma.auditFieldValue.create({ data: { auditId: audit.id, fieldName: 'transactionType', value: transactionType } });
+        }
+        const transactionDateFormatted = transDate.toISOString().split('T')[0];
+        await this.prisma.auditFieldValue.create({ data: { auditId: audit.id, fieldName: 'interactionDate', value: transactionDateFormatted } });
+
         // 6. Create failed parameter scores from all merged rows
         // Note: For legacy imports we need a UNIQUE valid ID per failure to satisfy the DB constraint.
         // We will fetch all available criteria and assign failures to them 1-by-1.

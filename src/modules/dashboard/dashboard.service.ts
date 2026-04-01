@@ -391,16 +391,10 @@ export class DashboardService {
         const allFailuresInScope = await this.prisma.auditScore.findMany({
           where: {
             isFailed: true,
-            criterion: {
-              categoryName: {
-                not: 'Non-Critical',
-                mode: 'insensitive',
-              },
-            },
-            categoryLabel: {
-              not: 'Non-Critical',
-              mode: 'insensitive',
-            },
+            // For ZTP: only categoryLabel determines critical status.
+            // Do NOT filter by criterion.categoryName — legacy imports use a bucket criterion
+            // whose categoryName may be Non-Critical regardless of the imported label.
+            categoryLabel: { not: null },
             audit: {
               // SECURITY: Still respect assigned campaigns
               campaignId: campaignIds.length > 0 
@@ -445,8 +439,15 @@ export class DashboardService {
         });
 
 
+        const NON_CRITICAL_LABELS = ['non-critical', 'n/a'];
+        const criticalFailuresInScope = allFailuresInScope.filter(f => {
+          const cat = (f.categoryLabel || f.criterion?.categoryName || '').trim().toLowerCase();
+          if (!cat) return false;
+          return !NON_CRITICAL_LABELS.includes(cat);
+        });
+
         const groupedByAgentParam: Record<string, Record<string, any[]>> = {};
-        allFailuresInScope.forEach((f) => {
+        criticalFailuresInScope.forEach((f) => {
           const agentId = f.audit.agentId;
           // Normalize parameter name for cross-version tracking
           const rawParam = (
@@ -522,16 +523,8 @@ export class DashboardService {
         const agentFailures = await this.prisma.auditScore.findMany({
           where: {
             isFailed: true,
-            criterion: {
-              categoryName: {
-                not: 'Non-Critical',
-                mode: 'insensitive',
-              },
-            },
-            categoryLabel: {
-              not: 'Non-Critical',
-              mode: 'insensitive',
-            },
+            // Same rule: only categoryLabel determines ZTP eligibility
+            categoryLabel: { not: null },
             audit: {
               agentId: singleAgentId,
               // FILTERS: Respect the user's active selections for the single agent view
@@ -561,8 +554,15 @@ export class DashboardService {
           ? agentFailures.filter(f => f.audit && f.audit.status !== 'SUBMITTED')
           : agentFailures;
 
+        const NON_CRITICAL_LABELS_SINGLE = ['non-critical', 'n/a'];
+        const criticalSingleAgentFailures = filteredFailures.filter(f => {
+          const cat = (f.categoryLabel || f.criterion?.categoryName || '').trim().toLowerCase();
+          if (!cat) return false;
+          return !NON_CRITICAL_LABELS_SINGLE.includes(cat);
+        });
+
         const failuresByParam: Record<string, any[]> = {};
-        filteredFailures.forEach((f) => {
+        criticalSingleAgentFailures.forEach((f) => {
           const paramStr = (
             f.criterionTitle ||
             f.criterion?.title ||

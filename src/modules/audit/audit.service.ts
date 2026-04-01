@@ -127,13 +127,13 @@ export class AuditService {
       where,
       include: {
         agent: {
-          select: { name: true, eid: true, email: true },
+          select: { name: true, eid: true, email: true, supervisor: true, projectCode: true },
         },
         auditor: {
           select: { name: true, eid: true, role: true },
         },
         campaign: {
-          select: { name: true, projectCode: true, coachingAckWindowDays: true, coachingReleaseWindowDays: true },
+          select: { name: true, projectCode: true, type: true, coachingAckWindowDays: true, coachingReleaseWindowDays: true },
         },
         formVersion: {
           include: {
@@ -161,36 +161,41 @@ export class AuditService {
       queryOptions.skip = Number(options.offset || 0);
     }
 
-    const audits = await this.prisma.audit.findMany(queryOptions);
-    const total = await this.prisma.audit.count({ where });
+    try {
+      const audits = await this.prisma.audit.findMany(queryOptions);
+      const total = await this.prisma.audit.count({ where });
 
-    const data = await Promise.all((audits as any[]).map(async (audit) => {
-      const lastView = audit.userViews?.[0];
-      const isUnread =
-        !lastView || new Date(lastView.viewedAt) < new Date(audit.lastActionAt);
-      
-      let ackDeadline = null;
-      let releaseDeadline = null;
+      const data = await Promise.all((audits as any[]).map(async (audit) => {
+        const lastView = audit.userViews?.[0];
+        const isUnread =
+          !lastView || new Date(lastView.viewedAt) < new Date(audit.lastActionAt);
+        
+        let ackDeadline = null;
+        let releaseDeadline = null;
 
-      // 1. Release SLA (Audit Submission -> Coaching Log Release)
-      const releaseSlaDays = audit.campaign?.coachingReleaseWindowDays ?? 3;
-      const releaseBasis = audit.submittedAt || audit.startedAt;
-      if (releaseBasis) {
-        const rDeadlineDate = await this.slaEngine.calculateDueDate(new Date(releaseBasis), releaseSlaDays, audit.campaignId);
-        releaseDeadline = endOfDay(rDeadlineDate);
-      }
+        // 1. Release SLA (Audit Submission -> Coaching Log Release)
+        const releaseSlaDays = audit.campaign?.coachingReleaseWindowDays ?? 3;
+        const releaseBasis = audit.submittedAt || audit.startedAt;
+        if (releaseBasis) {
+          const rDeadlineDate = await this.slaEngine.calculateDueDate(new Date(releaseBasis), releaseSlaDays, audit.campaignId);
+          releaseDeadline = endOfDay(rDeadlineDate);
+        }
 
-      // 2. Acknowledgment SLA (Coaching Log Release -> Agent Ack)
-      if (audit.coachingLog?.releasedAt) {
-        const ackSlaDays = audit.campaign?.coachingAckWindowDays ?? 2;
-        const ackDeadlineDate = await this.slaEngine.calculateDueDate(new Date(audit.coachingLog.releasedAt), ackSlaDays, audit.campaignId);
-        ackDeadline = endOfDay(ackDeadlineDate);
-      }
+        // 2. Acknowledgment SLA (Coaching Log Release -> Agent Ack)
+        if (audit.coachingLog?.releasedAt) {
+          const ackSlaDays = audit.campaign?.coachingAckWindowDays ?? 2;
+          const ackDeadlineDate = await this.slaEngine.calculateDueDate(new Date(audit.coachingLog.releasedAt), ackSlaDays, audit.campaignId);
+          ackDeadline = endOfDay(ackDeadlineDate);
+        }
 
-      return { ...audit, isUnread, ackDeadline, releaseDeadline };
-    }));
+        return { ...audit, isUnread, ackDeadline, releaseDeadline };
+      }));
 
-    return options?.limit ? { data, total } : data;
+      return options?.limit ? { data, total } : data;
+    } catch (err) {
+      console.error('Audit SEARCH ERROR:', err);
+      throw err;
+    }
   }
 
   async getFailures(user: any, filters: any = {}) {
@@ -323,6 +328,8 @@ export class AuditService {
           where: { isFailed: true },
           select: {
             comment: true,
+            categoryLabel: true,
+            criterionTitle: true,
             criterion: {
               select: {
                 title: true,

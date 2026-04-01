@@ -135,7 +135,7 @@ export class CampaignsService {
 
       if (!campaigns) return [];
 
-      return campaigns
+      const result = campaigns
         .flatMap((campaign: any) => {
           const forms = campaign.forms || [];
           
@@ -143,7 +143,6 @@ export class CampaignsService {
             // Fallback for campaigns with no direct form link, search by team name matching
             const teamForm = activeForms.find((f: any) => f.teamName === campaign.name);
             
-            // Focus: If a campaign has completely NO forms, hide it from the dropdown
             if (!teamForm) return [];
 
             return [
@@ -157,15 +156,22 @@ export class CampaignsService {
             ];
           }
 
-          // Return one entry per form for this campaign
           return forms.map((form: any) => ({
-            id: form.id, // Provide Form ID as the primary selection ID
+            id: form.id, 
             name: campaign.name || 'Unnamed Campaign',
             projectCode: campaign.projectCode || null,
             type: campaign.type || 'USER',
             scorecardName: form.name,
           }));
         });
+
+      // De-duplicate by Form ID to prevent showing the same evaluation option multiple times
+      const seen = new Set();
+      return result.filter(item => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      });
     } catch (error) {
       console.error('CampaignsService.findAssigned Error:', error);
       throw error;

@@ -8,10 +8,13 @@ import { SlaEngineModule } from '../sla-engine/sla-engine.module';
 import { CoachingLogController } from './coaching-log.controller';
 import { CoachingLogService } from './coaching-log.service';
 
+import { AuditImportController } from './audit-import.controller';
+import { AuditImportService } from './audit-import.service';
+
 @Module({
   imports: [MailModule, AuthModule, SlaEngineModule],
-  controllers: [AuditController, QaController, CoachingLogController],
-  providers: [AuditService, CoachingLogService],
-  exports: [AuditService, CoachingLogService],
+  controllers: [AuditController, QaController, CoachingLogController, AuditImportController],
+  providers: [AuditService, CoachingLogService, AuditImportService],
+  exports: [AuditService, CoachingLogService, AuditImportService],
 })
 export class AuditModule { }

@@ -222,6 +222,8 @@ model Audit {
   campaign           Campaign              @relation(fields: [campaignId], references: [id])
   formVersion        MonitoringFormVersion @relation(fields: [formVersionId], references: [id])
   sampledTicket      SampledTicket?        @relation(fields: [sampledTicketId], references: [id])
+  isLegacy           Boolean               @default(false)
+  legacyMetadata     Json?
   events             AuditEvent[]
   fieldValues        AuditFieldValue[]
   scores             AuditScore[]
@@ -240,6 +242,7 @@ model Audit {
   @@index([submittedAt])
   @@index([releasedAt])
   @@index([ticketReference])
+  @@index([isLegacy])
   // Compound indexes for Dashboard performance
   @@index([campaignId, status, submittedAt])
   @@index([agentId, submittedAt])

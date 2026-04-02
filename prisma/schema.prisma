@@ -50,36 +50,35 @@ model User {
   @@index([role])
   @@index([isActive])
   @@index([name])
-  // Compound indexes for Filter Bar cascading performance
   @@index([supervisor, employeeTeam])
   @@index([role, isActive])
 }
 
 model Campaign {
-  id                  String               @id @default(uuid())
-  name                String
-  isActive            Boolean              @default(true)
-  samplingRate        Float                @default(5.0)
-  stratification      Json?
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  type                CampaignType         @default(USER)
-  projectCode         String?
-  ztpAckSlaHours                Int                  @default(48)
-  ztpMilestones                 Int[]                @default([3, 6, 9, 12, 15])
-  ztpWindowDays                 Int                  @default(30)
-  disputeWindowDays             Int                  @default(5)
-  reappealWindowDays            Int                  @default(3)
-  coachingReleaseWindowDays     Int                  @default(3)
-  coachingCompletionWindowDays  Int                  @default(5)
-  coachingAckWindowDays         Int                  @default(2)
-  audits              Audit[]
-  calibrationSessions CalibrationSession[] @relation("CampaignCalibrationSessions")
-  qaAssignments       CampaignQA[]
-  forms               MonitoringForm[]
-  samplingRuns        SamplingRun[]
-  uploadBatches       TicketUploadBatch[]
-  ticketPool          UploadedTicket[]
+  id                           String               @id @default(uuid())
+  name                         String
+  isActive                     Boolean              @default(true)
+  samplingRate                 Float                @default(5.0)
+  stratification               Json?
+  createdAt                    DateTime             @default(now())
+  updatedAt                    DateTime             @updatedAt
+  type                         CampaignType         @default(USER)
+  projectCode                  String?
+  ztpAckSlaHours               Int                  @default(48)
+  ztpMilestones                Int[]                @default([3, 6, 9, 12, 15])
+  ztpWindowDays                Int                  @default(30)
+  disputeWindowDays            Int                  @default(5)
+  reappealWindowDays           Int                  @default(3)
+  coachingReleaseWindowDays    Int                  @default(3)
+  coachingCompletionWindowDays Int                  @default(5)
+  coachingAckWindowDays        Int                  @default(2)
+  audits                       Audit[]
+  calibrationSessions          CalibrationSession[] @relation("CampaignCalibrationSessions")
+  qaAssignments                CampaignQA[]
+  forms                        MonitoringForm[]
+  samplingRuns                 SamplingRun[]
+  uploadBatches                TicketUploadBatch[]
+  ticketPool                   UploadedTicket[]
 }
 
 model CampaignQA {
@@ -218,13 +217,13 @@ model Audit {
   agentAckDeadline   DateTime?
   lastActionAt       DateTime              @default(now())
   ticketReference    String?
+  isLegacy           Boolean               @default(false)
+  legacyMetadata     Json?
   agent              User                  @relation("Agent", fields: [agentId], references: [id])
   auditor            User                  @relation("Auditor", fields: [auditorId], references: [id])
   campaign           Campaign              @relation(fields: [campaignId], references: [id])
   formVersion        MonitoringFormVersion @relation(fields: [formVersionId], references: [id])
   sampledTicket      SampledTicket?        @relation(fields: [sampledTicketId], references: [id])
-  isLegacy           Boolean               @default(false)
-  legacyMetadata     Json?
   events             AuditEvent[]
   fieldValues        AuditFieldValue[]
   scores             AuditScore[]
@@ -244,7 +243,6 @@ model Audit {
   @@index([releasedAt])
   @@index([ticketReference])
   @@index([isLegacy])
-  // Compound indexes for Dashboard performance
   @@index([campaignId, status, submittedAt])
   @@index([agentId, submittedAt])
   @@index([campaignId, agentId])
@@ -291,7 +289,6 @@ model AuditScore {
   @@index([categoryLabel])
   @@index([criterionTitle])
   @@index([isFailed])
-  // Compound index for failure heatmap queries
   @@index([isFailed, auditId])
 }
 

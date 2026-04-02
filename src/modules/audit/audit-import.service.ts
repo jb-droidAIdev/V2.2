@@ -118,6 +118,8 @@ export class AuditImportService {
                 importTimestamp: new Date().toISOString(),
                 supervisor: firstRow["Agent's Supervisor"],
                 auditorName: firstRow['Auditor'],
+                startTime: firstRow['Start Time of Audit'],
+                endTime: firstRow['End Time of Audit'],
                 duration: firstRow['Audit Duration'],
                 projectCode: firstRow['Project Code'],
                 type: firstRow['Type'] || 'LEGACY IMPORT'

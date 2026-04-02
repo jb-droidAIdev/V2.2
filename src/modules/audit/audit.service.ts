@@ -176,17 +176,26 @@ export class AuditService {
         // 1. Release SLA (Audit Submission -> Coaching Log Release)
         const releaseSlaDays = audit.campaign?.coachingReleaseWindowDays ?? 3;
         const releaseBasis = audit.submittedAt || audit.startedAt;
-        if (releaseBasis) {
-          const rDeadlineDate = await this.slaEngine.calculateDueDate(new Date(releaseBasis), releaseSlaDays, audit.campaignId);
-          releaseDeadline = endOfDay(rDeadlineDate);
+        if (releaseBasis && !isNaN(new Date(releaseBasis).getTime())) {
+          try {
+            const rDeadlineDate = await this.slaEngine.calculateDueDate(new Date(releaseBasis), releaseSlaDays, audit.campaignId);
+            releaseDeadline = endOfDay(rDeadlineDate);
+          } catch (e) {
+            console.warn(`SLA Error (Release) for Audit ${audit.id}:`, e.message);
+          }
         }
 
         // 2. Acknowledgment SLA (Coaching Log Release -> Agent Ack)
-        if (audit.coachingLog?.releasedAt) {
-          const ackSlaDays = audit.campaign?.coachingAckWindowDays ?? 2;
-          const ackDeadlineDate = await this.slaEngine.calculateDueDate(new Date(audit.coachingLog.releasedAt), ackSlaDays, audit.campaignId);
-          ackDeadline = endOfDay(ackDeadlineDate);
+        if (audit.coachingLog?.releasedAt && !isNaN(new Date(audit.coachingLog.releasedAt).getTime())) {
+          try {
+            const ackSlaDays = audit.campaign?.coachingAckWindowDays ?? 2;
+            const ackDeadlineDate = await this.slaEngine.calculateDueDate(new Date(audit.coachingLog.releasedAt), ackSlaDays, audit.campaignId);
+            ackDeadline = endOfDay(ackDeadlineDate);
+          } catch (e) {
+            console.warn(`SLA Error (Ack) for Audit ${audit.id}:`, e.message);
+          }
         }
+
 
         return { ...audit, isUnread, ackDeadline, releaseDeadline };
       }));
